@@ -19,5 +19,12 @@
     "types": ["chrome"]
   },
   "include": ["src", "vite.config.ts"],
-  "exclude": ["dist", "node_modules", "**/*.test.ts", "**/*.test.tsx", "jest.config.ts", "jest.setup.ts"]
+  "exclude": [
+    "dist",
+    "node_modules",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "jest.config.ts",
+    "jest.setup.ts"
+  ]
 }

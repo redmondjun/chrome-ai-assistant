@@ -99,12 +99,12 @@ npm run typecheck # Run TypeScript check
 
 ## Model Details
 
-| Model | Parameters | Context | Location | Use Case |
-|-------|-----------|---------|----------|----------|
-| Nemotron Mini 4B | 4B | 8K | Local (WASM) | Classification, extraction, summaries |
-| Nemotron 3 Nano | 30B | 1M | NIM Cloud | Complex reasoning, doc generation |
-| Nemotron 3 Super | 120B | 1M | NIM Cloud | High-quality synthesis |
-| Nemotron 3 Ultra | 550B | 1M | NIM Cloud | Best quality, research tasks |
+| Model            | Parameters | Context | Location     | Use Case                              |
+| ---------------- | ---------- | ------- | ------------ | ------------------------------------- |
+| Nemotron Mini 4B | 4B         | 8K      | Local (WASM) | Classification, extraction, summaries |
+| Nemotron 3 Nano  | 30B        | 1M      | NIM Cloud    | Complex reasoning, doc generation     |
+| Nemotron 3 Super | 120B       | 1M      | NIM Cloud    | High-quality synthesis                |
+| Nemotron 3 Ultra | 550B       | 1M      | NIM Cloud    | Best quality, research tasks          |
 
 ## License
 

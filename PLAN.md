@@ -3,6 +3,7 @@
 ## Project Overview
 
 Build a Chrome extension (Manifest V3) that:
+
 1. Reads active tab content (text, links, metadata)
 2. Optionally follows relevant links to gather more information
 3. Uses hybrid AI (local Nemotron Mini 4B + cloud NIM Nemotron 3) to answer questions
@@ -14,6 +15,7 @@ Build a Chrome extension (Manifest V3) that:
 ## Phase 1: Foundation (Week 1)
 
 ### Day 1-2: Project Setup
+
 - [x] Initialize repo with Vite + TypeScript + React
 - [x] Configure Tailwind CSS
 - [x] Set up Manifest V3 with proper permissions
@@ -22,6 +24,7 @@ Build a Chrome extension (Manifest V3) that:
 - [x] Create build scripts and `.gitignore`
 
 ### Day 3-4: Messaging & Storage
+
 - [x] Background service worker skeleton
 - [x] Message passing types and router
 - [x] Chrome storage wrapper (settings sync)
@@ -29,6 +32,7 @@ Build a Chrome extension (Manifest V3) that:
 - [x] Settings change listeners
 
 ### Day 5: Content Extraction
+
 - [x] Content script: readability-based text extraction
 - [x] Link extraction with context snippets
 - [x] Metadata extraction (Open Graph, JSON-LD, meta tags)
@@ -39,6 +43,7 @@ Build a Chrome extension (Manifest V3) that:
 ## Phase 2: AI Pipeline (Week 2)
 
 ### Day 6-7: Cloud AI (NIM)
+
 - [x] NIM client with streaming support
 - [x] API key management
 - [x] Model selection (Nano/Super/Ultra)
@@ -46,6 +51,7 @@ Build a Chrome extension (Manifest V3) that:
 - [x] Error handling & retries
 
 ### Day 8-9: Local AI (WASM)
+
 - [x] Integrate `@wllama/wllama`
 - [x] Model download from Hugging Face (Nemotron Mini 4B Q4_K_M)
 - [x] IndexedDB caching (2.5GB model)
@@ -54,6 +60,7 @@ Build a Chrome extension (Manifest V3) that:
 - [x] Memory management (context cleanup)
 
 ### Day 10: Hybrid Router
+
 - [x] Task complexity classification
 - [x] Auto-routing rules (simple→local, complex→cloud)
 - [x] Force-cloud keywords
@@ -65,12 +72,14 @@ Build a Chrome extension (Manifest V3) that:
 ## Phase 3: Link Intelligence (Week 2-3)
 
 ### Day 11-12: Link Classification
+
 - [x] LLM-based link relevance scoring (0-1)
 - [x] Batch classification for efficiency
 - [x] Fallback keyword scoring
 - [x] Configurable threshold
 
 ### Day 13-14: Link Fetching
+
 - [x] Offscreen document for JS-rendered pages
 - [x] Fast fetch() for static content
 - [x] Rate limiting & concurrency control
@@ -83,6 +92,7 @@ Build a Chrome extension (Manifest V3) that:
 ## Phase 4: Analysis Pipeline (Week 3)
 
 ### Day 15-16: Pipeline Orchestration
+
 - [x] `analyzeWithReasoning()` main entry point
 - [x] Step-by-step reasoning emission
 - [x] Streaming response handling
@@ -90,6 +100,7 @@ Build a Chrome extension (Manifest V3) that:
 - [x] Error recovery
 
 ### Day 17: Prompt Engineering
+
 - [x] System prompts for each task type
 - [x] Context window management
 - [x] Source citation format
@@ -100,6 +111,7 @@ Build a Chrome extension (Manifest V3) that:
 ## Phase 5: Side Panel UI (Week 3-4)
 
 ### Day 18-19: Chat Interface
+
 - [x] Message list with streaming
 - [x] User/assistant bubbles
 - [x] Markdown rendering (marked.js)
@@ -107,12 +119,14 @@ Build a Chrome extension (Manifest V3) that:
 - [x] Input with Enter/Shift+Enter
 
 ### Day 20: Transparency Panels
+
 - [x] Reasoning panel (collapsible steps with timestamps)
 - [x] Links visited panel (table with scores, status, snippets)
 - [x] Tab switching between panels
 - [x] Real-time updates during streaming
 
 ### Day 21: Toolbar & Settings Integration
+
 - [x] Page title/URL display
 - [x] Model selector dropdown
 - [x] Local/cloud toggle with status
@@ -124,6 +138,7 @@ Build a Chrome extension (Manifest V3) that:
 ## Phase 6: Options Page (Week 4)
 
 ### Day 22-23: Full Settings UI
+
 - [x] API key input (password field)
 - [x] Cloud model selector
 - [x] Custom NIM endpoint
@@ -139,6 +154,7 @@ Build a Chrome extension (Manifest V3) that:
 ## Phase 7: Polish & Release (Week 4)
 
 ### Day 24-25: Edge Cases & Testing
+
 - [ ] Content script injection on SPA navigation
 - [ ] Offscreen document lifecycle
 - [ ] Memory pressure handling (large pages)
@@ -147,12 +163,14 @@ Build a Chrome extension (Manifest V3) that:
 - [ ] Settings migration
 
 ### Day 26: Documentation
+
 - [x] README.md
 - [x] PLAN.md (this file)
 - [ ] Architecture diagram
 - [ ] Contributing guide
 
 ### Day 27: Build & Release
+
 - [ ] Production build optimization
 - [ ] Chrome Web Store assets (icons, screenshots)
 - [ ] Version bump & tag
@@ -162,32 +180,32 @@ Build a Chrome extension (Manifest V3) that:
 
 ## Technical Decisions Log
 
-| Decision | Choice | Rationale |
-|----------|--------|-----------|
-| Local LLM | `@wllama/wllama` | Best WASM llama.cpp binding, active maintenance |
-| Model format | GGUF Q4_K_M | Best quality/size ratio for 4B model |
-| Model hosting | Hugging Face | Free, reliable, versioned |
-| Cloud API | NVIDIA NIM | OpenAI-compatible, free tier, Nemotron models |
-| State management | React useState + chrome.runtime | Simple, no extra deps |
-| Styling | Tailwind CSS | Utility-first, small bundle, dark mode |
-| Build | Vite | Fast HMR, multi-entry support |
-| Storage | IndexedDB + chrome.storage.sync | Large model files + cross-device settings |
-| Message passing | Typed message router | Type safety, easy debugging |
+| Decision         | Choice                          | Rationale                                       |
+| ---------------- | ------------------------------- | ----------------------------------------------- |
+| Local LLM        | `@wllama/wllama`                | Best WASM llama.cpp binding, active maintenance |
+| Model format     | GGUF Q4_K_M                     | Best quality/size ratio for 4B model            |
+| Model hosting    | Hugging Face                    | Free, reliable, versioned                       |
+| Cloud API        | NVIDIA NIM                      | OpenAI-compatible, free tier, Nemotron models   |
+| State management | React useState + chrome.runtime | Simple, no extra deps                           |
+| Styling          | Tailwind CSS                    | Utility-first, small bundle, dark mode          |
+| Build            | Vite                            | Fast HMR, multi-entry support                   |
+| Storage          | IndexedDB + chrome.storage.sync | Large model files + cross-device settings       |
+| Message passing  | Typed message router            | Type safety, easy debugging                     |
 
 ---
 
 ## Remaining Work (Post-MVP)
 
-| Feature | Priority | Effort |
-|---------|----------|--------|
-| PDF/image content extraction | Medium | High |
-| Multi-tab context | Medium | Medium |
-| Conversation history persistence | Low | Low |
-| Prompt templates library | Low | Medium |
-| Team/shared workspaces | Low | High |
-| Self-hosted NIM auto-discovery | Medium | Medium |
-| Keyboard shortcuts | Low | Low |
-| Context menu actions | Low | Low |
+| Feature                          | Priority | Effort |
+| -------------------------------- | -------- | ------ |
+| PDF/image content extraction     | Medium   | High   |
+| Multi-tab context                | Medium   | Medium |
+| Conversation history persistence | Low      | Low    |
+| Prompt templates library         | Low      | Medium |
+| Team/shared workspaces           | Low      | High   |
+| Self-hosted NIM auto-discovery   | Medium   | Medium |
+| Keyboard shortcuts               | Low      | Low    |
+| Context menu actions             | Low      | Low    |
 
 ---
 
