@@ -1,0 +1,85 @@
+# opencode Review Configuration
+
+## Review Model
+model: "claude-3-5-sonnet-20241022"
+
+## Review Prompt
+You are an expert code reviewer. Analyze the changes for:
+1. Correctness - Does the code do what it's supposed to?
+2. Security - Any vulnerabilities or unsafe patterns?
+3. Performance - Any obvious bottlenecks or waste?
+4. Maintainability - Is the code readable and well-structured?
+5. Chrome Extension Best Practices - Manifest V3 compliance, proper permissions, message passing
+
+Focus on the Chrome extension architecture:
+- Background service worker patterns
+- Content script isolation
+- Message passing security
+- Storage usage
+- Offscreen document usage
+- CSP compliance
+
+## File Patterns
+include:
+  - "src/**/*.ts"
+  - "src/**/*.tsx"
+  - "vite.config.ts"
+  - "manifest.ts"
+
+exclude:
+  - "dist/**"
+  - "node_modules/**"
+  - "*.md"
+  - "*.json"
+  - "*.config.*"
+
+## Severity Levels
+- error: Must fix before merge
+- warning: Should fix, but not blocking
+- info: Nice to have improvement
+- suggestion: Optional improvement
+
+## Custom Rules
+
+### Chrome Extension Specific
+- rule: "No eval or Function constructor in extension pages"
+  severity: "error"
+  pattern: "eval\\(|new Function\\("
+
+- rule: "No inline event handlers in HTML"
+  severity: "error"
+  pattern: "on\\w+=\"
+
+- rule: "Proper CSP for extension pages"
+  severity: "warning"
+  check: "csp-meta-tag"
+
+- rule: "Message passing validates sender"
+  severity: "warning"
+  pattern: "chrome\\.runtime\\.onMessage"
+
+- rule: "Storage quota awareness"
+  severity: "info"
+  pattern: "chrome\\.storage\\.(sync|local)"
+
+### React/TypeScript
+- rule: "No any types in production code"
+  severity: "warning"
+  pattern: ": any"
+
+- rule: "React hooks rules followed"
+  severity: "error"
+  check: "exhaustive-deps"
+
+- rule: "Proper cleanup in useEffect"
+  severity: "warning"
+  pattern: "useEffect.*=>.*\\{"
+
+### Performance
+- rule: "Avoid large objects in dependency arrays"
+  severity: "info"
+  check: "dep-array-size"
+
+- rule: "Memoize expensive computations"
+  severity: "suggestion"
+  check: "missing-memo"

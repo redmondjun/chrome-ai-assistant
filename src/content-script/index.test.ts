@@ -1,0 +1,137 @@
+import {
+  extractContent,
+  extractLinks,
+  extractMeta,
+  cleanElement,
+  getMainContent,
+  extractText,
+} from './extractor';
+
+describe('Content Extraction', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    document.head.innerHTML = '';
+  });
+
+  describe('extractText', () => {
+    it('extracts text from element', () => {
+      const div = document.createElement('div');
+      div.textContent = 'Hello World';
+      const result = extractText(div);
+      expect(result).toBe('Hello World');
+    });
+
+    it('skips script and style tags', () => {
+      const div = document.createElement('div');
+      div.innerHTML =
+        '<p>Visible</p><script>console.log("hidden")</script><style>.hidden{display:none}</style>';
+      const result = extractText(div);
+      expect(result).toContain('Visible');
+      expect(result).not.toContain('console.log');
+      expect(result).not.toContain('.hidden');
+    });
+
+    it('filters short text nodes', () => {
+      const div = document.createElement('div');
+      div.innerHTML = '<p>A</p><p>This is a longer text</p>';
+      const result = extractText(div);
+      expect(result).toBe('This is a longer text');
+    });
+  });
+
+  describe('cleanElement', () => {
+    it('removes noise elements', () => {
+      const div = document.createElement('div');
+      div.innerHTML = '<p>Main content</p><nav>Navigation</nav><footer>Footer</footer>';
+      cleanElement(div);
+      expect(div.querySelector('nav')).toBeNull();
+      expect(div.querySelector('footer')).toBeNull();
+      expect(div.querySelector('p')).not.toBeNull();
+    });
+
+    it('removes ads and social elements', () => {
+      const div = document.createElement('div');
+      div.innerHTML = '<p>Content</p><div class="ads">Ad</div><div class="social">Share</div>';
+      cleanElement(div);
+      expect(div.querySelector('.ads')).toBeNull();
+      expect(div.querySelector('.social')).toBeNull();
+    });
+  });
+
+  describe('getMainContent', () => {
+    it('finds article element', () => {
+      const article = document.createElement('article');
+      article.textContent = 'Article content';
+      document.body.appendChild(article);
+      const result = getMainContent();
+      expect(result).toBe(article);
+    });
+
+    it('falls back to main element', () => {
+      const main = document.createElement('main');
+      main.textContent = 'Main content';
+      document.body.appendChild(main);
+      const result = getMainContent();
+      expect(result).toBe(main);
+    });
+
+    it('falls back to body', () => {
+      document.body.textContent = 'Body content';
+      const result = getMainContent();
+      expect(result).toBe(document.body);
+    });
+  });
+
+  describe('extractLinks', () => {
+    it('extracts valid links', () => {
+      document.body.innerHTML = '<a href="/page1">Page 1</a><a href="/page2">Page 2</a>';
+      const links = extractLinks();
+      expect(links).toHaveLength(2);
+      expect(links[0].text).toBe('Page 1');
+      expect(links[0].isExternal).toBe(false);
+    });
+
+    it('filters non-http links', () => {
+      document.body.innerHTML =
+        '<a href="mailto:test@test.com">Email</a><a href="#anchor">Anchor</a>';
+      const links = extractLinks();
+      expect(links).toHaveLength(0);
+    });
+
+    it('filters short link text', () => {
+      document.body.innerHTML = '<a href="/page">A</a><a href="/page2">Valid link text</a>';
+      const links = extractLinks();
+      expect(links).toHaveLength(1);
+      expect(links[0].text).toBe('Valid link text');
+    });
+
+    it('extracts link context', () => {
+      document.body.innerHTML = '<p>Check out <a href="/pricing">our pricing</a> page</p>';
+      const links = extractLinks();
+      expect(links[0].context).toContain('Check out our pricing page');
+    });
+  });
+
+  describe('extractMeta', () => {
+    it('extracts meta tags', () => {
+      document.head.innerHTML =
+        '<meta name="description" content="Test page"><meta property="og:title" content="OG Title">';
+      const meta = extractMeta();
+      expect(meta.description).toBe('Test page');
+      expect(meta['og:title']).toBe('OG Title');
+    });
+  });
+
+  describe('extractContent', () => {
+    it('returns full tab content', () => {
+      document.body.innerHTML = '<article><h1>Title</h1><p>Content</p></article>';
+      document.head.innerHTML = '<meta name="description" content="Desc">';
+
+      const content = extractContent();
+      expect(content.title).toBe(document.title);
+      expect(content.text).toContain('Title');
+      expect(content.text).toContain('Content');
+      expect(content.meta.description).toBe('Desc');
+    });
+  });
+});

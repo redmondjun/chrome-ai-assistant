@@ -1,0 +1,230 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root,
+:root[data-theme='light'] {
+  --canvas: #f6f7f9;
+  --surface: #fff;
+  --elevated: #fff;
+  --text: #172033;
+  --muted: #667085;
+  --border: #dfe3ea;
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --accent-soft: #eaf1ff;
+  --success: #16835b;
+  --warning: #a15c00;
+  --danger: #c93434;
+  --focus: rgba(37, 99, 235, 0.28);
+}
+:root[data-theme='dark'] {
+  --canvas: #11151d;
+  --surface: #181e29;
+  --elevated: #202838;
+  --text: #f4f7fb;
+  --muted: #aab4c3;
+  --border: #303a4b;
+  --accent: #6ea8fe;
+  --accent-hover: #91bdff;
+  --accent-soft: #1d3153;
+  --success: #5bd4a6;
+  --warning: #f2b766;
+  --danger: #ff8585;
+  --focus: rgba(110, 168, 254, 0.35);
+}
+* {
+  box-sizing: border-box;
+}
+html,
+body,
+#root {
+  min-height: 100%;
+  margin: 0;
+}
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--canvas);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+.settings-page {
+  max-width: 800px !important;
+  padding: 38px 28px 28px !important;
+  color: var(--text);
+}
+.settings-heading {
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--border);
+}
+.settings-heading h1 {
+  margin: 2px 0 5px;
+  font-size: 28px;
+  letter-spacing: -0.035em;
+  color: var(--text);
+}
+.settings-heading > p:last-child {
+  color: var(--muted) !important;
+}
+.settings-eyebrow {
+  margin: 0;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+.settings-page section {
+  padding: 22px !important;
+  border: 1px solid var(--border);
+  border-radius: 12px !important;
+  background: var(--surface) !important;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04) !important;
+  color: var(--text);
+}
+.settings-page section h2 {
+  color: var(--text);
+  letter-spacing: -0.015em;
+}
+.section-description {
+  margin: 0 0 20px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.settings-page label {
+  color: var(--text);
+  font-size: 13px;
+}
+.settings-page input[type='text'],
+.settings-page input[type='password'],
+.settings-page input[type='number'],
+.settings-page select {
+  min-height: 40px;
+  border: 1px solid var(--border) !important;
+  border-radius: 8px !important;
+  background: var(--elevated) !important;
+  color: var(--text) !important;
+}
+.settings-page input::placeholder {
+  color: var(--muted);
+}
+.settings-page input:focus,
+.settings-page select:focus {
+  outline: 0;
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 3px var(--focus);
+}
+.settings-page input[type='checkbox'] {
+  accent-color: var(--accent);
+}
+.settings-page .text-xs,
+.settings-page .text-gray-500,
+.settings-page .text-gray-600,
+.settings-page .dark\:text-gray-400 {
+  color: var(--muted) !important;
+}
+.settings-page a {
+  color: var(--accent) !important;
+}
+.settings-page button,
+.settings-page label[class*='cursor-pointer'][class*='px-4'] {
+  border: 1px solid var(--border);
+  border-radius: 8px !important;
+  background: var(--elevated) !important;
+  color: var(--text) !important;
+  font-weight: 600;
+  transition:
+    border-color 0.15s,
+    background 0.15s,
+    color 0.15s;
+}
+.settings-page button:hover,
+.settings-page label[class*='cursor-pointer'][class*='px-4']:hover {
+  border-color: var(--muted);
+  background: var(--canvas) !important;
+}
+.settings-page button.bg-primary-600 {
+  border-color: var(--accent);
+  background: var(--accent) !important;
+  color: #fff !important;
+}
+.settings-page button.bg-primary-600:hover {
+  background: var(--accent-hover) !important;
+}
+.settings-page button[class*='bg-red'] {
+  border-color: color-mix(in srgb, var(--danger) 30%, var(--border));
+  background: color-mix(in srgb, var(--danger) 9%, var(--surface)) !important;
+  color: var(--danger) !important;
+}
+.save-bar button {
+  min-width: 135px;
+}
+.settings-page button:focus-visible,
+.settings-page input:focus-visible,
+.settings-page select:focus-visible,
+.settings-page a:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+@media (max-width: 560px) {
+  .settings-page {
+    padding: 24px 14px 100px !important;
+  }
+  .settings-page section {
+    padding: 17px !important;
+  }
+  .save-bar button {
+    width: 100%;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+  }
+}
+
+/* Explicit state hooks avoid positional and utility-substring selector leaks. */
+.save-notice {
+  border: 1px solid color-mix(in srgb, var(--success) 25%, var(--border));
+  background: color-mix(in srgb, var(--success) 9%, var(--surface));
+  color: var(--success);
+}
+.settings-alert {
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+.settings-alert-warning {
+  border-color: color-mix(in srgb, var(--warning) 28%, var(--border));
+  background: color-mix(in srgb, var(--warning) 8%, var(--surface));
+  color: var(--warning);
+}
+.settings-alert-success {
+  border-color: color-mix(in srgb, var(--success) 25%, var(--border));
+  background: color-mix(in srgb, var(--success) 8%, var(--surface));
+  color: var(--success);
+}
+.settings-alert p {
+  color: inherit !important;
+}
+.settings-alert button.bg-primary-600,
+.settings-alert button.bg-primary-600:hover {
+  color: #fff !important;
+}
+.save-bar {
+  position: sticky;
+  z-index: 3;
+  left: auto;
+  right: auto;
+  bottom: 0;
+  margin: 24px -28px -28px !important;
+  padding: 13px 28px;
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface) 96%, transparent);
+  box-shadow: 0 -4px 20px rgba(16, 24, 40, 0.06);
+}
+@media (max-width: 560px) {
+  .save-bar {
+    margin: 24px -14px -28px !important;
+    padding: 12px 14px;
+  }
+}
