@@ -1,5 +1,5 @@
 import React from 'react';
-import type { ModelSettings, TabContent } from '@/shared/types';
+import type { ChatConversation, ModelSettings, TabContent } from '@/shared/types';
 
 interface PageHeaderProps {
   page: TabContent | null;
@@ -9,6 +9,11 @@ interface PageHeaderProps {
   onModelChange: (model: ModelSettings['cloudModel']) => void;
   onRetry: () => void;
   onOpenSettings: () => void;
+  conversations: ChatConversation[];
+  activeConversationId?: string;
+  onConversationChange: (id: string) => void;
+  onNewConversation: () => void;
+  conversationBusy: boolean;
 }
 
 export function PageHeader({
@@ -19,6 +24,11 @@ export function PageHeader({
   onModelChange,
   onRetry,
   onOpenSettings,
+  conversations,
+  activeConversationId,
+  onConversationChange,
+  onNewConversation,
+  conversationBusy,
 }: PageHeaderProps) {
   return (
     <header className="page-header">
@@ -28,6 +38,11 @@ export function PageHeader({
           model={model}
           onModelChange={onModelChange}
           onOpenSettings={onOpenSettings}
+          conversations={conversations}
+          activeConversationId={activeConversationId}
+          onConversationChange={onConversationChange}
+          onNewConversation={onNewConversation}
+          conversationBusy={conversationBusy}
         />
       </div>
       <PageContext page={page} isLoading={isLoading} error={error} onRetry={onRetry} />
@@ -50,9 +65,48 @@ function HeaderActions({
   model,
   onModelChange,
   onOpenSettings,
-}: Pick<PageHeaderProps, 'model' | 'onModelChange' | 'onOpenSettings'>) {
+  conversations,
+  activeConversationId,
+  onConversationChange,
+  onNewConversation,
+  conversationBusy,
+}: Pick<
+  PageHeaderProps,
+  | 'model'
+  | 'onModelChange'
+  | 'onOpenSettings'
+  | 'conversations'
+  | 'activeConversationId'
+  | 'onConversationChange'
+  | 'onNewConversation'
+  | 'conversationBusy'
+>) {
   return (
     <div className="header-actions">
+      <label className="sr-only" htmlFor="conversation-select">
+        Conversation
+      </label>
+      <select
+        id="conversation-select"
+        className="conversation-select"
+        value={activeConversationId}
+        disabled={conversationBusy}
+        onChange={event => onConversationChange(event.target.value)}
+      >
+        {conversations.map(conversation => (
+          <option key={conversation.id} value={conversation.id}>
+            {conversation.title}
+          </option>
+        ))}
+      </select>
+      <button
+        className="new-chat-button"
+        type="button"
+        disabled={conversationBusy}
+        onClick={onNewConversation}
+      >
+        New chat
+      </button>
       <label className="sr-only" htmlFor="model-select">
         AI model
       </label>

@@ -3,6 +3,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 jest.mock('marked', () => ({ marked: { parse: (value: string) => `<p>${value}</p>` } }));
 import { AnswerDetails } from './AnswerDetails';
 import { Composer } from './Composer';
+import { Conversation } from './Conversation';
 import { EmptyState } from './EmptyState';
 import { MessageItem } from './MessageItem';
 import { PageHeader } from './PageHeader';
@@ -70,6 +71,32 @@ describe('side panel UI', () => {
     expect(screen.getByText(/request failed/i)).toBeInTheDocument();
   });
 
+  it('does not pull the reader back to the bottom while streaming updates arrive', () => {
+    const firstMessage = { id: '1', role: 'assistant' as const, content: 'First', timestamp: 1 };
+    const { container, rerender } = render(
+      <Conversation messages={[firstMessage]} promptsEnabled onPrompt={jest.fn()} />
+    );
+    const conversation = container.querySelector('.conversation')!;
+    Object.defineProperties(conversation, {
+      clientHeight: { configurable: true, value: 100 },
+      scrollHeight: { configurable: true, value: 500 },
+      scrollTop: { configurable: true, value: 0 },
+    });
+    const scrollIntoView = Element.prototype.scrollIntoView as jest.Mock;
+    const callsBeforeScroll = scrollIntoView.mock.calls.length;
+
+    fireEvent.scroll(conversation);
+    rerender(
+      <Conversation
+        messages={[{ ...firstMessage, content: 'First streamed update' }]}
+        promptsEnabled
+        onPrompt={jest.fn()}
+      />
+    );
+
+    expect(scrollIntoView).toHaveBeenCalledTimes(callsBeforeScroll);
+  });
+
   it('changes models, opens settings, and retries page errors', () => {
     const onModelChange = jest.fn();
     const onOpenSettings = jest.fn();
@@ -80,6 +107,19 @@ describe('side panel UI', () => {
         isLoading={false}
         error="Page unavailable"
         model="nemotron-3-nano"
+        conversations={[
+          {
+            id: 'chat-1',
+            title: 'Current chat',
+            messages: [],
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ]}
+        activeConversationId="chat-1"
+        onConversationChange={jest.fn()}
+        onNewConversation={jest.fn()}
+        conversationBusy={false}
         onModelChange={onModelChange}
         onOpenSettings={onOpenSettings}
         onRetry={onRetry}

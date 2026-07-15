@@ -6,9 +6,19 @@ interface ComposerProps {
   onSend: () => void;
   pageReady: boolean;
   busy: boolean;
+  generating: boolean;
+  onStop: () => void;
 }
 
-export function Composer({ value, onChange, onSend, pageReady, busy }: ComposerProps) {
+export function Composer({
+  value,
+  onChange,
+  onSend,
+  pageReady,
+  busy,
+  generating,
+  onStop,
+}: ComposerProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const disabled = !pageReady || busy;
 
@@ -43,10 +53,22 @@ export function Composer({ value, onChange, onSend, pageReady, busy }: ComposerP
           placeholder={pageReady ? 'Ask about this page…' : 'Page unavailable'}
           aria-label="Ask about this page"
         />
-        <SendButton disabled={disabled || !value.trim()} onClick={onSend} />
+        {generating ? (
+          <StopButton onClick={onStop} />
+        ) : (
+          <SendButton disabled={disabled || !value.trim()} onClick={onSend} />
+        )}
       </div>
       <small>Enter to send · Shift + Enter for a new line</small>
     </footer>
+  );
+}
+
+function StopButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button type="button" onClick={onClick} className="stop-button" aria-label="Stop response">
+      <span aria-hidden="true" />
+    </button>
   );
 }
 

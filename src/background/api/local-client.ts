@@ -102,11 +102,19 @@ export async function completeLocal(
     topP?: number;
     stop?: string[];
     onToken?: (token: string) => void;
+    signal?: AbortSignal;
   } = {}
 ): Promise<string> {
   if (!wllama) throw new Error('Local model not initialized');
 
-  const { maxTokens = 1024, temperature = 0.7, topP = 0.9, stop = ['\n\n'], onToken } = options;
+  const {
+    maxTokens = 1024,
+    temperature = 0.7,
+    topP = 0.9,
+    stop = ['\n\n'],
+    onToken,
+    signal,
+  } = options;
 
   let fullResponse = '';
   await wllama.createCompletion({
@@ -116,6 +124,7 @@ export async function completeLocal(
     top_p: topP,
     stop,
     stream: true,
+    abortSignal: signal,
     onData: (data: any) => {
       const chunk = data.text || '';
       fullResponse += chunk;
@@ -133,11 +142,12 @@ export async function* streamLocal(
     temperature?: number;
     topP?: number;
     stop?: string[];
+    signal?: AbortSignal;
   } = {}
 ): AsyncGenerator<{ chunk: string }> {
   if (!wllama) throw new Error('Local model not initialized');
 
-  const { maxTokens = 1024, temperature = 0.7, topP = 0.9, stop = ['\n\n'] } = options;
+  const { maxTokens = 1024, temperature = 0.7, topP = 0.9, stop = ['\n\n'], signal } = options;
 
   const chunks: string[] = [];
   await wllama.createCompletion({
@@ -147,6 +157,7 @@ export async function* streamLocal(
     top_p: topP,
     stop,
     stream: true,
+    abortSignal: signal,
     onData: (data: any) => {
       const chunk = data.text || '';
       chunks.push(chunk);

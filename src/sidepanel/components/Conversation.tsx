@@ -10,14 +10,31 @@ interface ConversationProps {
 }
 
 export function Conversation({ messages, promptsEnabled, onPrompt }: ConversationProps) {
+  const conversationRef = useRef<HTMLElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
+  const shouldAutoScrollRef = useRef(true);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (shouldAutoScrollRef.current) {
+      endRef.current?.scrollIntoView({ behavior: 'auto' });
+    }
   }, [messages]);
 
+  const handleScroll = () => {
+    const conversation = conversationRef.current;
+    if (!conversation) return;
+
+    shouldAutoScrollRef.current =
+      conversation.scrollHeight - conversation.scrollTop - conversation.clientHeight < 48;
+  };
+
   return (
-    <section className="conversation" aria-live="polite">
+    <section
+      ref={conversationRef}
+      className="conversation"
+      aria-live="polite"
+      onScroll={handleScroll}
+    >
       {messages.length === 0 ? (
         <EmptyState enabled={promptsEnabled} onPrompt={onPrompt} />
       ) : (

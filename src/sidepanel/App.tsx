@@ -40,6 +40,11 @@ export default function App() {
         onModelChange={cloudModel => void settings.updateModel({ cloudModel })}
         onRetry={() => void activeTab.reload()}
         onOpenSettings={openSettings}
+        conversations={chat.conversations}
+        activeConversationId={chat.activeConversationId}
+        onConversationChange={chat.selectConversation}
+        onNewConversation={chat.startNewConversation}
+        conversationBusy={chat.isLoading}
       />
       <Conversation
         messages={chat.messages}
@@ -52,6 +57,8 @@ export default function App() {
         onSend={() => void chat.send()}
         pageReady={pageReady}
         busy={chat.isLoading || !chat.isHistoryLoaded}
+        generating={chat.isLoading}
+        onStop={() => void chat.stop()}
       />
     </main>
   );

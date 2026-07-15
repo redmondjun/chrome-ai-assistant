@@ -26,9 +26,12 @@ export class ModelRouter {
 
     if (useLocal && isLocalModelReady()) {
       try {
+        options.signal?.throwIfAborted();
         const text = await completeLocal(prompt, options);
+        options.signal?.throwIfAborted();
         return { text, modelUsed: 'local' };
       } catch (e) {
+        if (options.signal?.aborted) throw e;
         console.warn('Local completion failed, falling back to cloud:', e);
       }
     }
@@ -38,14 +41,17 @@ export class ModelRouter {
       { role: 'user' as const, content: prompt },
     ];
 
-    const fullText = await this.nimClient.chatCompletion({
-      model: this.settings.cloudModel,
-      messages,
-      stream: false,
-      temperature: options.temperature ?? 0.7,
-      max_tokens: options.maxTokens ?? 4096,
-      top_p: options.topP ?? 0.9,
-    });
+    const fullText = await this.nimClient.chatCompletion(
+      {
+        model: this.settings.cloudModel,
+        messages,
+        stream: false,
+        temperature: options.temperature ?? 0.7,
+        max_tokens: options.maxTokens ?? 4096,
+        top_p: options.topP ?? 0.9,
+      },
+      options.signal
+    );
 
     return { text: fullText, modelUsed: 'cloud' };
   }
@@ -62,27 +68,32 @@ export class ModelRouter {
       try {
         let fullText = '';
         for await (const { chunk } of streamLocal(prompt, options)) {
+          options.signal?.throwIfAborted();
           fullText += chunk;
           yield { chunk, usedLocal: true };
         }
         return { text: fullText, modelUsed: 'local' };
       } catch (e) {
+        if (options.signal?.aborted) throw e;
         console.warn('Local streaming failed, falling back to cloud:', e);
       }
     }
 
     let fullText = '';
-    for await (const chunk of this.nimClient.streamChatCompletion({
-      model: this.settings.cloudModel,
-      messages: [
-        { role: 'system', content: 'You are a helpful AI assistant.' },
-        { role: 'user', content: prompt },
-      ],
-      temperature: options.temperature ?? 0.7,
-      max_tokens: options.maxTokens ?? 4096,
-      top_p: options.topP ?? 0.9,
-      stream: true,
-    })) {
+    for await (const chunk of this.nimClient.streamChatCompletion(
+      {
+        model: this.settings.cloudModel,
+        messages: [
+          { role: 'system', content: 'You are a helpful AI assistant.' },
+          { role: 'user', content: prompt },
+        ],
+        temperature: options.temperature ?? 0.7,
+        max_tokens: options.maxTokens ?? 4096,
+        top_p: options.topP ?? 0.9,
+        stream: true,
+      },
+      options.signal
+    )) {
       fullText += chunk;
       yield { chunk, usedLocal: false };
     }

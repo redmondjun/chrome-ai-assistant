@@ -23,6 +23,18 @@ export interface LinkVisit {
   snippet?: string;
   timestamp: number;
   error?: string;
+  method?: 'direct-fetch' | 'browser-tab';
+  depth?: number;
+}
+
+export interface LinkDecision {
+  url: string;
+  title: string;
+  outcome: 'selected' | 'discarded' | 'skipped';
+  reason: string;
+  depth: number;
+  score?: number;
+  timestamp: number;
 }
 
 export interface ReasoningStep {
@@ -75,8 +87,17 @@ export interface ChatMessage {
   timestamp: number;
   reasoning?: ReasoningStep[];
   linkVisits?: LinkVisit[];
+  linkDecisions?: LinkDecision[];
   modelUsed?: 'local' | 'cloud';
   isStreaming?: boolean;
+}
+
+export interface ChatConversation {
+  id: string;
+  title: string;
+  messages: ChatMessage[];
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface CompletionOptions {
@@ -84,6 +105,7 @@ export interface CompletionOptions {
   maxTokens?: number;
   topP?: number;
   stop?: string[];
+  signal?: AbortSignal;
 }
 
 export interface CompletionResult {
@@ -96,6 +118,7 @@ export interface BackgroundMessage {
   type:
     | 'GET_TAB_CONTENT'
     | 'ASK_QUESTION'
+    | 'STOP_GENERATION'
     | 'FOLLOW_LINKS'
     | 'GET_SETTINGS'
     | 'UPDATE_SETTINGS'
@@ -117,11 +140,12 @@ export interface ContentScriptMessage {
 }
 
 export interface SidePanelMessage {
-  type: 'STREAM_CHUNK' | 'ERROR' | 'REASONING' | 'LINK_VISIT' | 'DONE';
+  type: 'STREAM_CHUNK' | 'ERROR' | 'REASONING' | 'LINK_VISIT' | 'LINK_DECISION' | 'DONE';
   chunk?: string;
   messageId?: string;
   reasoning?: ReasoningStep[];
   linkVisit?: LinkVisit;
+  linkDecision?: LinkDecision;
   done?: boolean;
   message?: string;
 }

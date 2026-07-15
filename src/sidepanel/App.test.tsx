@@ -129,6 +129,21 @@ describe('side panel App', () => {
         chunk: 'A concise answer.',
       })
     );
+    act(() =>
+      runtimeListener?.({
+        type: 'LINK_DECISION',
+        messageId: ask.messageId,
+        decision: {
+          url: 'https://example.com/unselected',
+          title: 'Unselected source',
+          outcome: 'discarded',
+          reason: 'below-relevance-threshold',
+          depth: 1,
+          score: 0.1,
+          timestamp: 2,
+        },
+      })
+    );
     act(() => runtimeListener?.({ type: 'STREAM_DONE', messageId: ask.messageId }));
 
     expect(screen.getByText('A concise answer.')).toBeInTheDocument();
@@ -136,9 +151,22 @@ describe('side panel App', () => {
     await waitFor(() =>
       expect(chrome.storage.local.set).toHaveBeenCalledWith(
         expect.objectContaining({
-          'chrome-ai-chat-history:https://example.com/article': expect.arrayContaining([
-            expect.objectContaining({ role: 'user', content: 'What is this about?' }),
-            expect.objectContaining({ role: 'assistant', content: 'A concise answer.' }),
+          'chrome-ai-conversations': expect.arrayContaining([
+            expect.objectContaining({
+              messages: expect.arrayContaining([
+                expect.objectContaining({ role: 'user', content: 'What is this about?' }),
+                expect.objectContaining({
+                  role: 'assistant',
+                  content: 'A concise answer.',
+                  linkDecisions: [
+                    expect.objectContaining({
+                      outcome: 'discarded',
+                      reason: 'below-relevance-threshold',
+                    }),
+                  ],
+                }),
+              ]),
+            }),
           ]),
         })
       )
@@ -163,6 +191,27 @@ describe('side panel App', () => {
     });
   });
 
+  it('stops an in-progress response', async () => {
+    render(<App />);
+
+    expect(await screen.findByText('Example article')).toBeInTheDocument();
+    fireEvent.change(screen.getByRole('textbox', { name: /ask about this page/i }), {
+      target: { value: 'Write a long answer' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /send message/i }));
+
+    const stopButton = await screen.findByRole('button', { name: /stop response/i });
+    fireEvent.click(stopButton);
+
+    await waitFor(() =>
+      expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'STOP_GENERATION', messageId: expect.any(String) })
+      )
+    );
+    expect(screen.getByText('Response stopped.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /stop response/i })).not.toBeInTheDocument();
+  });
+
   it('shows a readable page error and retries successfully', async () => {
     (chrome.runtime.sendMessage as jest.Mock)
       .mockResolvedValueOnce({ error: 'Chrome does not allow extensions to read this page.' })
@@ -180,25 +229,39 @@ describe('side panel App', () => {
 
   it('restores the saved conversation for the current page', async () => {
     (chrome.storage.local.get as jest.Mock).mockResolvedValue({
-      'chrome-ai-chat-history:https://example.com/article': [
+      'chrome-ai-conversations': [
         {
-          id: 'previous-user',
-          role: 'user',
-          content: 'What changed?',
-          timestamp: 1,
-        },
-        {
-          id: 'previous-assistant',
-          role: 'assistant',
-          content: 'The link-following behavior changed.',
-          timestamp: 2,
+          id: 'previous-chat',
+          title: 'Previous chat',
+          createdAt: 1,
+          updatedAt: 2,
+          messages: [
+            {
+              id: 'previous-user',
+              role: 'user',
+              content: 'What changed?',
+              timestamp: 1,
+            },
+            {
+              id: 'previous-assistant',
+              role: 'assistant',
+              content: 'The link-following behavior changed.',
+              timestamp: 2,
+            },
+          ],
         },
       ],
+      'chrome-ai-active-conversation': 'previous-chat',
     });
 
     render(<App />);
 
     expect(await screen.findByText('What changed?')).toBeInTheDocument();
     expect(screen.getByText('The link-following behavior changed.')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /new chat/i }));
+
+    expect(screen.getByRole('heading', { name: /understand any page/i })).toBeInTheDocument();
+    expect(screen.getByLabelText('Conversation')).toHaveTextContent('Previous chat');
   });
 });

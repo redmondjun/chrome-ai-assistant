@@ -1,53 +1,67 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { ChatMessage, TabContent } from '@/shared/types';
+import type { ChatConversation, ChatMessage, TabContent } from '@/shared/types';
 
-const CHAT_HISTORY_PREFIX = 'chrome-ai-chat-history:';
+const CHAT_CONVERSATIONS_KEY = 'chrome-ai-conversations';
+const ACTIVE_CONVERSATION_KEY = 'chrome-ai-active-conversation';
+const LEGACY_CHAT_HISTORY_PREFIX = 'chrome-ai-chat-history:';
 const MAX_STORED_MESSAGES = 100;
 
 export function useChat(page: TabContent | null) {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [conversations, setConversations] = useState<ChatConversation[]>([]);
+  const [activeConversationId, setActiveConversationId] = useState<string>();
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [loadedHistoryKey, setLoadedHistoryKey] = useState<string>();
-  const historyKey = page ? `${CHAT_HISTORY_PREFIX}${page.url}` : undefined;
+  const [activeMessageId, setActiveMessageId] = useState<string>();
+  const [isHistoryLoaded, setIsHistoryLoaded] = useState(false);
+  const activeConversation = conversations.find(chat => chat.id === activeConversationId);
+  const messages = activeConversation?.messages || [];
 
   useEffect(() => {
-    if (!historyKey) {
-      setMessages([]);
-      setLoadedHistoryKey(undefined);
-      return;
-    }
-
     let active = true;
-    setLoadedHistoryKey(undefined);
-    setMessages([]);
-
-    void chrome.storage.local.get(historyKey).then(result => {
+    void chrome.storage.local.get(null).then(result => {
       if (!active) return;
-      const saved = result[historyKey];
-      setMessages(Array.isArray(saved) ? saved : []);
-      setLoadedHistoryKey(historyKey);
+      const saved = result[CHAT_CONVERSATIONS_KEY];
+      const chats = Array.isArray(saved) ? saved : restoreLegacyConversations(result);
+      const selected = chats.find(chat => chat.id === result[ACTIVE_CONVERSATION_KEY]) || chats[0];
+      const initial = selected || createConversation();
+      setConversations(selected ? chats : [initial]);
+      setActiveConversationId(initial.id);
+      setIsHistoryLoaded(true);
     });
 
     return () => {
       active = false;
     };
-  }, [historyKey]);
+  }, []);
 
   useEffect(() => {
-    if (!historyKey || loadedHistoryKey !== historyKey) return;
-
-    const completedMessages = messages.filter(message => !message.isStreaming).slice(-MAX_STORED_MESSAGES);
-    void chrome.storage.local.set({ [historyKey]: completedMessages });
-  }, [historyKey, loadedHistoryKey, messages]);
+    if (!isHistoryLoaded) return;
+    void chrome.storage.local.set({
+      [CHAT_CONVERSATIONS_KEY]: conversations.map(chat => ({
+        ...chat,
+        messages: chat.messages.filter(message => !message.isStreaming).slice(-MAX_STORED_MESSAGES),
+      })),
+      [ACTIVE_CONVERSATION_KEY]: activeConversationId,
+    });
+  }, [activeConversationId, conversations, isHistoryLoaded]);
 
   const updateMessage = useCallback(
     (messageId: string, update: (message: ChatMessage) => ChatMessage) => {
-      setMessages(current =>
-        current.map(message => (message.id === messageId ? update(message) : message))
+      setConversations(current =>
+        current.map(chat =>
+          chat.id === activeConversationId
+            ? {
+                ...chat,
+                messages: chat.messages.map(message =>
+                  message.id === messageId ? update(message) : message
+                ),
+                updatedAt: Date.now(),
+              }
+            : chat
+        )
       );
     },
-    []
+    [activeConversationId]
   );
 
   const finishMessage = useCallback(
@@ -58,6 +72,7 @@ export function useChat(page: TabContent | null) {
         isStreaming: false,
       }));
       setIsLoading(false);
+      setActiveMessageId(current => (current === messageId ? undefined : current));
     },
     [updateMessage]
   );
@@ -88,6 +103,12 @@ export function useChat(page: TabContent | null) {
             linkVisits: [...(current.linkVisits || []), message.visit],
           }));
           break;
+        case 'LINK_DECISION':
+          updateMessage(message.messageId, current => ({
+            ...current,
+            linkDecisions: [...(current.linkDecisions || []), message.decision],
+          }));
+          break;
         case 'STREAM_DONE':
         case 'DONE':
           finishMessage(message.messageId);
@@ -109,9 +130,21 @@ export function useChat(page: TabContent | null) {
 
       const userMessage = createMessage('user', question);
       const assistantMessage = createMessage('assistant', '', true);
-      setMessages(current => [...current, userMessage, assistantMessage]);
+      setConversations(current =>
+        current.map(chat =>
+          chat.id === activeConversationId
+            ? {
+                ...chat,
+                title: chat.messages.length === 0 ? question.slice(0, 48) : chat.title,
+                messages: [...chat.messages, userMessage, assistantMessage],
+                updatedAt: Date.now(),
+              }
+            : chat
+        )
+      );
       setInput('');
       setIsLoading(true);
+      setActiveMessageId(assistantMessage.id);
 
       try {
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -129,17 +162,82 @@ export function useChat(page: TabContent | null) {
         finishMessage(assistantMessage.id, `Error: ${error}`);
       }
     },
-    [finishMessage, input, isLoading, messages, page]
+    [activeConversationId, finishMessage, input, isLoading, messages, page]
   );
 
+  const stop = useCallback(async () => {
+    if (!activeMessageId) return;
+    const messageId = activeMessageId;
+    updateMessage(messageId, message => ({
+      ...message,
+      content: message.content || 'Response stopped.',
+      isStreaming: false,
+    }));
+    setIsLoading(false);
+    setActiveMessageId(undefined);
+    try {
+      await chrome.runtime.sendMessage({ type: 'STOP_GENERATION', messageId });
+    } catch (error) {
+      console.error('[chat]', 'Could not stop generation:', error);
+    }
+  }, [activeMessageId, updateMessage]);
+
+  const startNewConversation = useCallback(() => {
+    const conversation = createConversation();
+    setConversations(current => [conversation, ...current]);
+    setActiveConversationId(conversation.id);
+    setInput('');
+  }, []);
+
   return {
+    conversations,
+    activeConversationId,
+    selectConversation: setActiveConversationId,
+    startNewConversation,
     messages,
     input,
     setInput,
     isLoading,
-    isHistoryLoaded: Boolean(historyKey && loadedHistoryKey === historyKey),
+    isHistoryLoaded,
     send,
+    stop,
   };
+}
+
+function createConversation(): ChatConversation {
+  const now = Date.now();
+  return {
+    id: crypto.randomUUID(),
+    title: 'New chat',
+    messages: [],
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function restoreLegacyConversations(storage: { [key: string]: unknown }): ChatConversation[] {
+  return Object.entries(storage)
+    .filter(([key, value]) => key.startsWith(LEGACY_CHAT_HISTORY_PREFIX) && Array.isArray(value))
+    .map(([key, value]) => {
+      const url = key.slice(LEGACY_CHAT_HISTORY_PREFIX.length);
+      const messages = value as ChatMessage[];
+      const timestamp = messages.at(-1)?.timestamp || Date.now();
+      return {
+        id: crypto.randomUUID(),
+        title: `Chat from ${getHost(url)}`,
+        messages,
+        createdAt: messages[0]?.timestamp || timestamp,
+        updatedAt: timestamp,
+      };
+    });
+}
+
+function getHost(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
 }
 
 function createMessage(

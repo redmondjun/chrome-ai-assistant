@@ -12,6 +12,8 @@ global.chrome = {
   },
   tabs: {
     query: jest.fn(),
+    create: jest.fn(),
+    remove: jest.fn(),
     sendMessage: jest.fn(),
     onActivated: { addListener: jest.fn(), removeListener: jest.fn() },
     onUpdated: { addListener: jest.fn(), removeListener: jest.fn() },

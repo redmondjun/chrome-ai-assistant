@@ -6,6 +6,7 @@ import type { BackgroundMessage, TabContent, StorageSettings } from '@/shared/ty
 
 let router: ModelRouter | null = null;
 let currentContent: TabContent | null = null;
+const activeAnalyses = new Map<string, AbortController>();
 
 async function init() {
   const settings = await getSettings();
@@ -48,48 +49,92 @@ chrome.runtime.onMessage.addListener((message: BackgroundMessage, sender, sendRe
           }
 
           const settings = await getSettings();
+          const messageId = message.messageId;
+          if (!messageId) throw new Error('No message ID');
+          const controller = new AbortController();
+          activeAnalyses.get(messageId)?.abort('Replaced by a newer request.');
+          activeAnalyses.set(messageId, controller);
+          const startedAt = Date.now();
+          console.info('[analysis]', 'request-started', { messageId });
 
           const callbacks: AnalysisCallbacks = {
             onChunk: chunk => {
               chrome.runtime.sendMessage({
                 type: 'STREAM_CHUNK',
                 chunk,
-                messageId: message.messageId,
+                messageId,
               });
             },
             onReasoning: step => {
               chrome.runtime.sendMessage({
                 type: 'REASONING',
                 step,
-                messageId: message.messageId,
+                messageId,
               });
             },
             onLinkVisit: visit => {
               chrome.runtime.sendMessage({
                 type: 'LINK_VISIT',
                 visit,
-                messageId: message.messageId,
+                messageId,
+              });
+            },
+            onLinkDecision: decision => {
+              chrome.runtime.sendMessage({
+                type: 'LINK_DECISION',
+                decision,
+                messageId,
               });
             },
             onDone: () => {
               chrome.runtime.sendMessage({
                 type: 'STREAM_DONE',
-                messageId: message.messageId,
+                messageId,
               });
             },
           };
 
-          analyzeWithReasoning(router, content, message.question, settings, callbacks, message.history).catch(
-            err => {
+          analyzeWithReasoning(
+            router,
+            content,
+            message.question,
+            settings,
+            callbacks,
+            message.history,
+            controller.signal
+          )
+            .catch(err => {
+              if (controller.signal.aborted) {
+                console.info('[analysis]', 'request-stopped', {
+                  messageId,
+                  elapsedMs: Date.now() - startedAt,
+                });
+                return;
+              }
+              console.error('[analysis]', 'request-failed', {
+                messageId,
+                elapsedMs: Date.now() - startedAt,
+                error: err instanceof Error ? err.message : String(err),
+              });
               chrome.runtime.sendMessage({
                 type: 'ERROR',
-                message: err.message,
-                messageId: message.messageId,
+                message: err instanceof Error ? err.message : String(err),
+                messageId,
               });
-            }
-          );
+            })
+            .finally(() => {
+              if (activeAnalyses.get(messageId) === controller) activeAnalyses.delete(messageId);
+            });
 
           sendResponse({ ok: true });
+          break;
+        }
+
+        case 'STOP_GENERATION': {
+          const messageId = message.messageId;
+          const controller = messageId ? activeAnalyses.get(messageId) : undefined;
+          controller?.abort('Stopped by user.');
+          sendResponse({ ok: Boolean(controller) });
           break;
         }
 

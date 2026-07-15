@@ -144,6 +144,29 @@ summary:focus-visible {
   color: var(--text);
   font-size: 12px;
 }
+.conversation-select {
+  max-width: 120px;
+  height: 30px;
+  padding: 0 24px 0 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--elevated);
+  color: var(--text);
+  font-size: 12px;
+}
+.new-chat-button {
+  height: 30px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--elevated);
+  color: var(--text);
+  font-size: 12px;
+}
+.new-chat-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
 .icon-button {
   width: 30px;
   height: 30px;
@@ -329,6 +352,13 @@ summary:focus-visible {
   background: currentColor;
   border-radius: 50%;
   animation: pulse 1s infinite;
+}
+.stop-button span {
+  display: block;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  background: currentColor;
 }
 .message-body {
   border: 1px solid var(--border);

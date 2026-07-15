@@ -43,6 +43,7 @@ export interface ChatChunk {
 }
 
 export const DEFAULT_NIM_BASE_URL = 'https://integrate.api.nvidia.com/v1';
+const REQUEST_TIMEOUT_MS = 120000;
 
 export class NIMClient {
   private apiKey: string;
@@ -74,77 +75,91 @@ export class NIMClient {
     return this.modelMap[model] || model;
   }
 
-  async chatCompletion(request: ChatRequest): Promise<string> {
-    const response = await fetch(`${this.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.apiKey}`,
-      },
-      body: JSON.stringify({
-        ...request,
-        model: this.getModelId(request.model),
-      }),
-    });
+  async chatCompletion(request: ChatRequest, signal?: AbortSignal): Promise<string> {
+    const requestSignal = createRequestSignal(signal);
+    try {
+      const response = await fetch(`${this.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.apiKey}`,
+        },
+        body: JSON.stringify({
+          ...request,
+          model: this.getModelId(request.model),
+        }),
+        signal: requestSignal.signal,
+      });
 
-    if (!response.ok) {
-      throw await this.createApiError(response);
+      if (!response.ok) {
+        throw await this.createApiError(response);
+      }
+
+      const data = await response.json();
+      return data.choices[0]?.message?.content || '';
+    } finally {
+      requestSignal.dispose();
     }
-
-    const data = await response.json();
-    return data.choices[0]?.message?.content || '';
   }
 
-  async *streamChatCompletion(request: ChatRequest): AsyncGenerator<string> {
-    const response = await fetch(`${this.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.apiKey}`,
-        Accept: 'text/event-stream',
-      },
-      body: JSON.stringify({
-        ...request,
-        model: this.getModelId(request.model),
-        stream: true,
-      }),
-    });
-
-    if (!response.ok) {
-      throw await this.createApiError(response);
-    }
-
-    const reader = response.body?.getReader();
-    if (!reader) throw new Error('No response body');
-
-    const decoder = new TextDecoder();
-    let buffer = '';
-
+  async *streamChatCompletion(request: ChatRequest, signal?: AbortSignal): AsyncGenerator<string> {
+    const requestSignal = createRequestSignal(signal);
     try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+      const response = await fetch(`${this.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.apiKey}`,
+          Accept: 'text/event-stream',
+        },
+        body: JSON.stringify({
+          ...request,
+          model: this.getModelId(request.model),
+          stream: true,
+        }),
+        signal: requestSignal.signal,
+      });
 
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
+      if (!response.ok) {
+        throw await this.createApiError(response);
+      }
 
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = line.slice(6).trim();
-            if (data === '[DONE]') return;
-            try {
-              const parsed = JSON.parse(data);
-              const content = parsed.choices[0]?.delta?.content;
-              if (content) yield content;
-            } catch {
-              // Ignore parse errors
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error('No response body');
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      try {
+        while (true) {
+          if (requestSignal.signal.aborted) throw requestSignal.signal.reason;
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const data = line.slice(6).trim();
+              if (data === '[DONE]') return;
+              try {
+                const parsed = JSON.parse(data);
+                const content = parsed.choices[0]?.delta?.content;
+                if (content) yield content;
+              } catch {
+                // Ignore parse errors
+              }
             }
           }
         }
+      } finally {
+        await reader.cancel?.().catch(() => undefined);
+        reader.releaseLock();
       }
     } finally {
-      reader.releaseLock();
+      requestSignal.dispose();
     }
   }
 
@@ -184,6 +199,25 @@ export class NIMClient {
       `${response.status}${response.statusText ? ` ${response.statusText}` : ''}`.trim();
     return new Error(`NIM API error (${status}): ${detail || 'No error details returned'}`);
   }
+}
+
+function createRequestSignal(parent?: AbortSignal): { signal: AbortSignal; dispose: () => void } {
+  const controller = new AbortController();
+  const abort = () => controller.abort(parent?.reason);
+  const timeout = setTimeout(
+    () => controller.abort(new DOMException('The AI response timed out.', 'TimeoutError')),
+    REQUEST_TIMEOUT_MS
+  );
+  parent?.addEventListener('abort', abort, { once: true });
+  if (parent?.aborted) abort();
+
+  return {
+    signal: controller.signal,
+    dispose: () => {
+      clearTimeout(timeout);
+      parent?.removeEventListener('abort', abort);
+    },
+  };
 }
 
 export function createNIMClient(apiKey: string, baseUrl?: string): NIMClient {
