@@ -398,6 +398,23 @@ summary:focus-visible {
 .message-content ol {
   padding-left: 20px;
 }
+.message-content table {
+  width: 100%;
+  margin: 0 0 8px;
+  border: 1px solid var(--border);
+  border-collapse: collapse;
+}
+.message-content th,
+.message-content td {
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+.message-content th {
+  background: var(--canvas);
+  font-weight: 650;
+}
 .message-content pre {
   overflow: auto;
   padding: 10px;
