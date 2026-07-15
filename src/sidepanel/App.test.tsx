@@ -80,6 +80,8 @@ describe('side panel App', () => {
     (chrome.storage.sync.get as jest.Mock).mockResolvedValue({
       'chrome-ai-settings': savedSettings,
     });
+    (chrome.storage.local.get as jest.Mock).mockResolvedValue({});
+    (chrome.storage.local.set as jest.Mock).mockResolvedValue(undefined);
     (chrome.runtime.sendMessage as jest.Mock).mockImplementation(async message => {
       if (message.type === 'GET_TAB_CONTENT') return { type: 'TAB_CONTENT', content: page };
       return { ok: true };
@@ -131,6 +133,34 @@ describe('side panel App', () => {
 
     expect(screen.getByText('A concise answer.')).toBeInTheDocument();
     expect(screen.queryByText('Generating')).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(chrome.storage.local.set).toHaveBeenCalledWith(
+        expect.objectContaining({
+          'chrome-ai-chat-history:https://example.com/article': expect.arrayContaining([
+            expect.objectContaining({ role: 'user', content: 'What is this about?' }),
+            expect.objectContaining({ role: 'assistant', content: 'A concise answer.' }),
+          ]),
+        })
+      )
+    );
+
+    fireEvent.change(screen.getByRole('textbox', { name: /ask about this page/i }), {
+      target: { value: 'Can you expand on that?' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /send message/i }));
+
+    await waitFor(() => {
+      const requests = (chrome.runtime.sendMessage as jest.Mock).mock.calls
+        .map(([message]) => message)
+        .filter(message => message.type === 'ASK_QUESTION');
+      expect(requests).toHaveLength(2);
+      expect(requests[1].history).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ role: 'user', content: 'What is this about?' }),
+          expect.objectContaining({ role: 'assistant', content: 'A concise answer.' }),
+        ])
+      );
+    });
   });
 
   it('shows a readable page error and retries successfully', async () => {
@@ -146,5 +176,29 @@ describe('side panel App', () => {
 
     expect(await screen.findByText('Example article')).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: /ask about this page/i })).toBeEnabled();
+  });
+
+  it('restores the saved conversation for the current page', async () => {
+    (chrome.storage.local.get as jest.Mock).mockResolvedValue({
+      'chrome-ai-chat-history:https://example.com/article': [
+        {
+          id: 'previous-user',
+          role: 'user',
+          content: 'What changed?',
+          timestamp: 1,
+        },
+        {
+          id: 'previous-assistant',
+          role: 'assistant',
+          content: 'The link-following behavior changed.',
+          timestamp: 2,
+        },
+      ],
+    });
+
+    render(<App />);
+
+    expect(await screen.findByText('What changed?')).toBeInTheDocument();
+    expect(screen.getByText('The link-following behavior changed.')).toBeInTheDocument();
   });
 });

@@ -79,7 +79,7 @@ chrome.runtime.onMessage.addListener((message: BackgroundMessage, sender, sendRe
             },
           };
 
-          analyzeWithReasoning(router, content, message.question, settings, callbacks).catch(
+          analyzeWithReasoning(router, content, message.question, settings, callbacks, message.history).catch(
             err => {
               chrome.runtime.sendMessage({
                 type: 'ERROR',

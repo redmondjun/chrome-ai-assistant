@@ -23,6 +23,18 @@ export function LinkSettingsSection({ settings, onChange }: Props) {
         onChange={checked => update('enabled', checked)}
       />
 
+      <Field id="link-following-mode" label="Following mode">
+        <select
+          id="link-following-mode"
+          value={settings.mode}
+          onChange={event => update('mode', event.target.value as LinkSettings['mode'])}
+          className={CONTROL_CLASS}
+        >
+          <option value="ai-first">Only when the question needs linked content</option>
+          <option value="deep">Always research relevant links</option>
+        </select>
+      </Field>
+
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <NumberField
           id="max-depth"

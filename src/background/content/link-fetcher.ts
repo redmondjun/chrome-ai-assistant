@@ -55,6 +55,7 @@ export class LinkFetcher {
       const response = await fetch(url, {
         signal: controller.signal,
         headers: { 'User-Agent': 'Chrome-AI-Assistant/1.0' },
+        credentials: 'include',
       });
 
       clearTimeout(timeout);

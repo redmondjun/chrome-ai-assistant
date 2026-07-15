@@ -49,6 +49,30 @@ describe('Analysis Pipeline', () => {
   });
 
   describe('analyzeWithReasoning', () => {
+    it('uses the AI-first decision instead of requiring the word "link"', async () => {
+      mockRouter.complete.mockResolvedValueOnce({ text: 'yes' }).mockResolvedValueOnce({ text: '[0.9, 0.1]' });
+      mockRouter.streamComplete.mockImplementation(async function* () {
+        yield { chunk: 'Answer', usedLocal: true };
+      });
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        text: async () => '<html><body><article>Pull request details</article></body></html>',
+        headers: { get: () => 'text/html' },
+      });
+
+      await analyzeWithReasoning(
+        mockRouter as any,
+        mockContent,
+        'Summarize the pull request evidence',
+        mockSettings,
+        mockCallbacks
+      );
+
+      expect(mockCallbacks.onLinkVisit).toHaveBeenCalledWith(
+        expect.objectContaining({ url: 'https://example.com/link1', status: 'success' })
+      );
+    });
+
     it('emits reasoning steps', async () => {
       mockRouter.streamComplete.mockImplementation(async function* () {
         yield { chunk: 'Test answer', usedLocal: false };
@@ -78,7 +102,7 @@ describe('Analysis Pipeline', () => {
     });
 
     it('classifies and fetches relevant links', async () => {
-      mockRouter.complete.mockResolvedValue({ text: '[0.9, 0.1]' });
+      mockRouter.complete.mockResolvedValueOnce({ text: 'yes' }).mockResolvedValueOnce({ text: '[0.9, 0.1]' });
       mockRouter.streamComplete.mockImplementation(async function* () {
         yield { chunk: 'Answer', usedLocal: true };
       });

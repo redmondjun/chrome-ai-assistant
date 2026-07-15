@@ -13,6 +13,7 @@ const storedSettings = {
   },
   links: {
     enabled: true,
+    mode: 'ai-first',
     maxDepth: 2,
     maxPages: 10,
     rateLimitMs: 500,

@@ -7,6 +7,7 @@ const SETTINGS_KEY = 'chrome-ai-settings';
 
 export function useSettingsForm() {
   const [settings, setSettings] = useState<ExtensionSettings>(DEFAULT_SETTINGS);
+  const [isLoaded, setIsLoaded] = useState(false);
   const [saved, setSaved] = useState(false);
   const [localModelStatus, setLocalModelStatus] = useState({ ready: false, progress: 0 });
   useTheme(settings.ui.theme);
@@ -16,9 +17,15 @@ export function useSettingsForm() {
     void refreshLocalModelStatus();
   }, []);
 
+  useEffect(() => {
+    if (!isLoaded) return;
+    void chrome.storage.sync.set({ [SETTINGS_KEY]: settings });
+  }, [isLoaded, settings]);
+
   async function loadSettings() {
     const result = await chrome.storage.sync.get(SETTINGS_KEY);
     setSettings(mergeSettings(result[SETTINGS_KEY]));
+    setIsLoaded(true);
   }
 
   async function refreshLocalModelStatus() {

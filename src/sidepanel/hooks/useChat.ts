@@ -1,10 +1,45 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { ChatMessage, TabContent } from '@/shared/types';
 
+const CHAT_HISTORY_PREFIX = 'chrome-ai-chat-history:';
+const MAX_STORED_MESSAGES = 100;
+
 export function useChat(page: TabContent | null) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [loadedHistoryKey, setLoadedHistoryKey] = useState<string>();
+  const historyKey = page ? `${CHAT_HISTORY_PREFIX}${page.url}` : undefined;
+
+  useEffect(() => {
+    if (!historyKey) {
+      setMessages([]);
+      setLoadedHistoryKey(undefined);
+      return;
+    }
+
+    let active = true;
+    setLoadedHistoryKey(undefined);
+    setMessages([]);
+
+    void chrome.storage.local.get(historyKey).then(result => {
+      if (!active) return;
+      const saved = result[historyKey];
+      setMessages(Array.isArray(saved) ? saved : []);
+      setLoadedHistoryKey(historyKey);
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [historyKey]);
+
+  useEffect(() => {
+    if (!historyKey || loadedHistoryKey !== historyKey) return;
+
+    const completedMessages = messages.filter(message => !message.isStreaming).slice(-MAX_STORED_MESSAGES);
+    void chrome.storage.local.set({ [historyKey]: completedMessages });
+  }, [historyKey, loadedHistoryKey, messages]);
 
   const updateMessage = useCallback(
     (messageId: string, update: (message: ChatMessage) => ChatMessage) => {
@@ -85,6 +120,7 @@ export function useChat(page: TabContent | null) {
           question,
           messageId: assistantMessage.id,
           context: page,
+          history: messages,
           tabId: tab?.id,
         });
         if (response?.error) throw new Error(response.error);
@@ -93,10 +129,17 @@ export function useChat(page: TabContent | null) {
         finishMessage(assistantMessage.id, `Error: ${error}`);
       }
     },
-    [finishMessage, input, isLoading, page]
+    [finishMessage, input, isLoading, messages, page]
   );
 
-  return { messages, input, setInput, isLoading, send };
+  return {
+    messages,
+    input,
+    setInput,
+    isLoading,
+    isHistoryLoaded: Boolean(historyKey && loadedHistoryKey === historyKey),
+    send,
+  };
 }
 
 function createMessage(

@@ -9,6 +9,7 @@ export interface ExtensionSettings {
   };
   links: {
     enabled: boolean;
+    mode: 'ai-first' | 'deep';
     maxDepth: number;
     maxPages: number;
     rateLimitMs: number;
@@ -44,6 +45,7 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
   },
   links: {
     enabled: true,
+    mode: 'ai-first',
     maxDepth: 2,
     maxPages: 10,
     rateLimitMs: 500,

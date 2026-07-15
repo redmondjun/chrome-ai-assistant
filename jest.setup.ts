@@ -18,6 +18,7 @@ global.chrome = {
   },
   storage: {
     sync: { get: jest.fn(), set: jest.fn(), remove: jest.fn() },
+    local: { get: jest.fn(), set: jest.fn(), remove: jest.fn() },
     onChanged: { addListener: jest.fn() },
   },
   sidePanel: {

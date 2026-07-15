@@ -28,16 +28,26 @@ Output ONLY a JSON array of numbers: [0.8, 0.2, ...]`;
   }
 }
 
-export async function shouldFollowLinks(router: ModelRouter, question: string): Promise<boolean> {
+export async function shouldFollowLinks(
+  router: ModelRouter,
+  question: string,
+  linkCount: number
+): Promise<boolean> {
   const prompt = `Does this question require visiting links to answer well?
+The current page contains ${linkCount} links that the assistant can visit.
 Question: "${question}"
 
 Answer ONLY "yes" or "no".`;
 
-  const { text } = await router.complete(question, { hasLinks: false, contentLength: 0 }, prompt, {
-    temperature: 0,
-    maxTokens: 10,
-  });
-
-  return text.toLowerCase().includes('yes');
+  try {
+    const { text } = await router.complete(question, { hasLinks: true, contentLength: 0 }, prompt, {
+      temperature: 0,
+      maxTokens: 10,
+    });
+    return text.toLowerCase().includes('yes');
+  } catch {
+    return /\b(link|source|reference|citation|ticket|pull request|pr|supporting material|peer feedback)\b/i.test(
+      question
+    );
+  }
 }

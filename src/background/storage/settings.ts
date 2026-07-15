@@ -45,7 +45,7 @@ const SETTINGS_KEY = 'chrome-ai-settings';
 
 export async function getSettings(): Promise<StorageSettings> {
   const result = await chrome.storage.sync.get(SETTINGS_KEY);
-  return { ...DEFAULT_SETTINGS, ...result[SETTINGS_KEY] };
+  return deepMerge(DEFAULT_SETTINGS, result[SETTINGS_KEY] || {});
 }
 
 export async function saveSettings(settings: Partial<StorageSettings>): Promise<void> {

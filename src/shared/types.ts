@@ -104,6 +104,7 @@ export interface BackgroundMessage {
   tabId?: number;
   question?: string;
   context?: TabContent;
+  history?: ChatMessage[];
   settings?: Partial<StorageSettings>;
   modelUrl?: string;
   messageId?: string;

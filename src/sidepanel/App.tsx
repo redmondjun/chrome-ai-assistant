@@ -51,7 +51,7 @@ export default function App() {
         onChange={chat.setInput}
         onSend={() => void chat.send()}
         pageReady={pageReady}
-        busy={chat.isLoading}
+        busy={chat.isLoading || !chat.isHistoryLoaded}
       />
     </main>
   );

@@ -1,10 +1,12 @@
 import { ModelRouter } from '../api/router';
+import { shouldFollowLinks as modelShouldFollowLinks } from '../content/classifier';
 import type {
   TabContent,
   ReasoningStep,
   LinkVisit,
   LinkFollowSettings,
   ModelSettings,
+  ChatMessage,
 } from '@/shared/types';
 
 export interface AnalysisCallbacks {
@@ -22,7 +24,8 @@ export async function analyzeWithReasoning(
     model: ModelSettings;
     links: LinkFollowSettings;
   },
-  callbacks: AnalysisCallbacks
+  callbacks: AnalysisCallbacks,
+  history: ChatMessage[] = []
 ): Promise<void> {
   callbacks.onReasoning?.({
     step: 1,
@@ -34,7 +37,8 @@ export async function analyzeWithReasoning(
   const shouldFollow =
     settings.links.enabled &&
     (settings.links.mode === 'deep' ||
-      (settings.links.mode === 'ai-first' && question.toLowerCase().includes('link')));
+      (settings.links.mode === 'ai-first' &&
+        (await modelShouldFollowLinks(router, question, content.links.length))));
 
   let context = content.text;
 
@@ -112,13 +116,13 @@ export async function analyzeWithReasoning(
   }
 
   // Generate final answer
-  const prompt = buildPrompt(context, question, content.url, content.title);
+  const prompt = buildPrompt(context, question, content.url, content.title, history);
 
   for await (const result of router.streamComplete(
     question,
     {
       hasLinks: shouldFollow,
-      contentLength: context.length,
+      contentLength: context.length + history.reduce((length, message) => length + message.content.length, 0),
     },
     prompt,
     { temperature: 0.7, maxTokens: 4096 }
@@ -174,6 +178,7 @@ async function fetchLinkContent(url: string): Promise<string | null> {
   try {
     const requestOptions: RequestInit = {
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; ChromeAI/1.0)' },
+      credentials: 'include',
     };
     if (typeof AbortSignal.timeout === 'function') {
       requestOptions.signal = AbortSignal.timeout(10000);
@@ -213,13 +218,25 @@ function isBlockedDomain(url: string, blockedDomains: string[]): boolean {
   }
 }
 
-function buildPrompt(context: string, question: string, url: string, title: string): string {
+function buildPrompt(
+  context: string,
+  question: string,
+  url: string,
+  title: string,
+  history: ChatMessage[]
+): string {
+  const conversation = history
+    .filter(message => !message.isStreaming && message.content)
+    .slice(-12)
+    .map(message => `${message.role === 'user' ? 'User' : 'Assistant'}: ${message.content.slice(0, 4000)}`)
+    .join('\n\n');
+
   return `Source: ${title} (${url})
 
 Content:
 ${context.slice(0, 50000)}
 
-Question: ${question}
+${conversation ? `Conversation so far:\n${conversation}\n\n` : ''}Question: ${question}
 
 Answer comprehensively using the provided content. Cite sources when possible.`;
 }

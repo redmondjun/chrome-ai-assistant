@@ -58,7 +58,7 @@ const manifest: ManifestV3 = {
   options_page: 'options/index.html',
   content_security_policy: {
     extension_pages:
-      "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; connect-src 'self' https://integrate.api.nvidia.com https://api.nvidia.com https://huggingface.co",
+      "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; connect-src 'self' https: https://integrate.api.nvidia.com https://api.nvidia.com https://huggingface.co",
   },
   web_accessible_resources: [
     {
