@@ -1,5 +1,6 @@
 import { ModelRouter } from '../api/router';
 import { shouldFollowLinks as modelShouldFollowLinks } from '../content/classifier';
+import { fetchLinkContentInTab } from '../content/link-tab-fetcher';
 import type {
   TabContent,
   ReasoningStep,
@@ -7,12 +8,15 @@ import type {
   LinkFollowSettings,
   ModelSettings,
   ChatMessage,
+  LinkInfo,
+  LinkDecision,
 } from '@/shared/types';
 
 export interface AnalysisCallbacks {
   onChunk: (chunk: string) => void;
   onReasoning?: (step: ReasoningStep) => void;
   onLinkVisit?: (visit: LinkVisit) => void;
+  onLinkDecision?: (decision: LinkDecision) => void;
   onDone?: () => void;
 }
 
@@ -25,83 +29,269 @@ export async function analyzeWithReasoning(
     links: LinkFollowSettings;
   },
   callbacks: AnalysisCallbacks,
-  history: ChatMessage[] = []
+  history: ChatMessage[] = [],
+  signal?: AbortSignal
 ): Promise<void> {
+  const startedAt = Date.now();
+  const logStage = (stage: string, details: object = {}) =>
+    console.info('[analysis]', stage, { elapsedMs: Date.now() - startedAt, ...details });
+  logStage('started', { linkCount: content.links.length });
+  signal?.throwIfAborted();
   callbacks.onReasoning?.({
     step: 1,
     type: 'classify',
-    thought: `Analyzing question and deciding whether to follow links...`,
+    thought: 'Analyzing question and deciding whether to follow links (research pipeline v5)...',
     timestamp: Date.now(),
   });
 
+  if (asksForLinkVisitStatus(question)) {
+    callbacks.onReasoning?.({
+      step: 2,
+      type: 'synthesize',
+      thought: 'Reporting recorded link-visit results from this conversation.',
+      timestamp: Date.now(),
+    });
+    callbacks.onChunk(buildLinkVisitStatus(history));
+    callbacks.onDone?.();
+    return;
+  }
+
+  const explicitLinkRequest = explicitlyRequestsLinkRetrieval(question);
+
   const shouldFollow =
     settings.links.enabled &&
-    (settings.links.mode === 'deep' ||
+    (explicitLinkRequest ||
+      settings.links.mode === 'deep' ||
       (settings.links.mode === 'ai-first' &&
-        (await modelShouldFollowLinks(router, question, content.links.length))));
+        (await modelShouldFollowLinks(router, question, content.links.length, signal))));
+  logStage('link-decision', { shouldFollow });
 
-  let context = content.text;
+  let context = content.text.slice(0, 20000);
+  const currentVisits: LinkVisit[] = [];
+  const sourceExcerptLimit = Math.max(
+    1200,
+    Math.floor(30000 / Math.max(1, settings.links.maxPages))
+  );
 
   if (shouldFollow && content.links.length > 0) {
-    const availableLinks = content.links.filter(
-      link => !isBlockedDomain(link.url, settings.links.blockedDomains)
+    const availableLinks = content.links.filter(link => {
+      if (isBlockedDomain(link.url, settings.links.blockedDomains)) {
+        emitLinkDecision(callbacks, link, 1, 'discarded', 'blocked-domain');
+        return false;
+      }
+      if (isLikelyNavigationLink(link)) {
+        emitLinkDecision(callbacks, link, 1, 'discarded', 'navigation-link');
+        return false;
+      }
+      return true;
+    });
+    const rootEvidenceIdentifiers = extractEvidenceIdentifiers(
+      `${content.text}\n${availableLinks.map(link => `${link.text} ${link.url}`).join('\n')}`
     );
 
     // Classify links for relevance
-    const linkScores = await classifyLinks(router, availableLinks, question);
+    const linkScores = await classifyLinks(router, availableLinks, question, signal);
 
-    const relevantLinks = availableLinks
-      .map((link, i) => ({ link, score: linkScores[i] }))
-      .filter(({ score }) => score > 0.3)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, settings.links.maxPages);
+    const scoredLinks = availableLinks.map((link, i) => ({ link, score: linkScores[i] }));
+    const allRelevantLinks = explicitlyRequestsAllLinks(question)
+      ? scoredLinks
+      : scoredLinks.filter(({ link, score }) => {
+          if (score > 0.3) return true;
+          emitLinkDecision(callbacks, link, 1, 'discarded', 'below-relevance-threshold', score);
+          return false;
+        });
+    allRelevantLinks.sort((a, b) => b.score - a.score);
+    const relevantLinks = allRelevantLinks.slice(0, settings.links.maxPages);
+    relevantLinks.forEach(({ link, score }) =>
+      emitLinkDecision(callbacks, link, 1, 'selected', 'ranked-for-retrieval', score)
+    );
+    allRelevantLinks
+      .slice(settings.links.maxPages)
+      .forEach(({ link, score }) =>
+        emitLinkDecision(callbacks, link, 1, 'skipped', 'page-budget-limit', score)
+      );
+    const queue: Array<{ link: LinkInfo; score: number; depth: number }> = relevantLinks.map(
+      item => ({ ...item, depth: 1 })
+    );
+    const queuedUrls = new Set(queue.map(item => normalizeUrl(item.link.url)));
+    let attemptedPages = 0;
+    let deepestAttempted = 0;
 
     callbacks.onReasoning?.({
       step: 2,
       type: 'fetch',
-      thought: `Found ${relevantLinks.length} relevant links. Fetching content...`,
+      thought: `Selected ${relevantLinks.length} of ${allRelevantLinks.length} relevant first-depth links (Max Pages: ${settings.links.maxPages}); researching breadth-first up to depth ${settings.links.maxDepth}...`,
       timestamp: Date.now(),
     });
 
-    // Fetch relevant links
-    for (const { link, score } of relevantLinks) {
+    while (queue.length > 0 && attemptedPages < settings.links.maxPages) {
+      signal?.throwIfAborted();
+      const { link, score, depth } = queue.shift()!;
+      attemptedPages++;
+      deepestAttempted = Math.max(deepestAttempted, depth);
       callbacks.onLinkVisit?.({
         url: link.url,
         title: link.text,
         relevanceScore: score,
         status: 'fetching',
         timestamp: Date.now(),
+        depth,
       });
 
       try {
-        const fetched = await fetchLinkContent(link.url);
+        let fetched = await fetchLinkContent(link.url, signal);
+        let failure = '';
+        let method: LinkVisit['method'] = 'direct-fetch';
+        let discoveredLinks: LinkInfo[] = [];
+        let fetchedTitle = link.text;
+        if (!fetched) {
+          const tabResult = await fetchLinkContentInTab(link.url, signal);
+          fetched = tabResult.content || null;
+          failure = tabResult.error || '';
+          discoveredLinks = tabResult.links || [];
+          fetchedTitle = tabResult.title || fetchedTitle;
+          method = 'browser-tab';
+        }
         if (fetched) {
-          context += `\n\n--- Content from ${link.url} ---\n${fetched}`;
+          const invalidReason = getInvalidPageReason(fetched, fetchedTitle);
+          if (invalidReason) {
+            const visit: LinkVisit = {
+              url: link.url,
+              title: link.text,
+              relevanceScore: score,
+              status: 'failed',
+              timestamp: Date.now(),
+              error: invalidReason,
+              method,
+              depth,
+            };
+            currentVisits.push(visit);
+            callbacks.onLinkVisit?.(visit);
+            emitLinkDecision(callbacks, link, depth, 'discarded', 'invalid-page-content', score);
+            continue;
+          }
+          const sourceExcerpt = fetched.slice(0, sourceExcerptLimit);
+          context += `\n\n--- Content from ${link.url} (depth ${depth}) ---\n${sourceExcerpt}`;
 
-          callbacks.onLinkVisit?.({
+          const visit: LinkVisit = {
             url: link.url,
             title: link.text,
             relevanceScore: score,
             status: 'success',
             timestamp: Date.now(),
-            snippet: fetched.slice(0, 200),
-          });
+            snippet: fetched.slice(0, 1500),
+            method,
+            depth,
+          };
+          currentVisits.push(visit);
+          callbacks.onLinkVisit?.(visit);
+
+          if (depth < settings.links.maxDepth && discoveredLinks.length > 0) {
+            const childCandidates = discoveredLinks.filter(child => {
+              if (isBlockedDomain(child.url, settings.links.blockedDomains)) {
+                emitLinkDecision(callbacks, child, depth + 1, 'discarded', 'blocked-domain');
+                return false;
+              }
+              if (isLikelyNavigationLink(child)) {
+                emitLinkDecision(callbacks, child, depth + 1, 'discarded', 'navigation-link');
+                return false;
+              }
+              if (queuedUrls.has(normalizeUrl(child.url))) {
+                emitLinkDecision(callbacks, child, depth + 1, 'discarded', 'duplicate-url');
+                return false;
+              }
+              return true;
+            });
+            const childLinks = childCandidates.slice(0, 40);
+            childCandidates
+              .slice(40)
+              .forEach(child =>
+                emitLinkDecision(
+                  callbacks,
+                  child,
+                  depth + 1,
+                  'skipped',
+                  'child-classification-limit'
+                )
+              );
+            const childScores = await classifyLinks(router, childLinks, question, signal);
+            const relevantChildren = childLinks
+              .map((child, index) => ({ link: child, score: childScores[index], depth: depth + 1 }))
+              .filter(child => {
+                const relevant = isRelevantChildLink(
+                  child.link,
+                  child.score,
+                  question,
+                  fetched,
+                  rootEvidenceIdentifiers
+                );
+                emitLinkDecision(
+                  callbacks,
+                  child.link,
+                  child.depth,
+                  relevant ? 'selected' : 'discarded',
+                  relevant ? 'relevant-child-source' : 'below-child-relevance',
+                  child.score
+                );
+                return relevant;
+              })
+              .sort((left, right) => right.score - left.score);
+
+            relevantChildren.forEach(child => queuedUrls.add(normalizeUrl(child.link.url)));
+            queue.push(...relevantChildren);
+          }
+        } else {
+          const visit: LinkVisit = {
+            url: link.url,
+            title: link.text,
+            relevanceScore: score,
+            status: 'failed',
+            timestamp: Date.now(),
+            method: 'browser-tab',
+            depth,
+            error:
+              failure ||
+              'No readable content returned. Sign in to the source and connect to the company network.',
+          };
+          currentVisits.push(visit);
+          callbacks.onLinkVisit?.(visit);
         }
-      } catch {
-        callbacks.onLinkVisit?.({
+      } catch (error) {
+        const visit: LinkVisit = {
           url: link.url,
           title: link.text,
           relevanceScore: score,
           status: 'failed',
           timestamp: Date.now(),
-        });
+          error: error instanceof Error ? error.message : String(error),
+          depth,
+        };
+        currentVisits.push(visit);
+        callbacks.onLinkVisit?.(visit);
+      }
+
+      if (queue.length > 0 && settings.links.rateLimitMs > 0) {
+        await delay(settings.links.rateLimitMs, signal);
       }
     }
+
+    queue.forEach(({ link, score, depth }) =>
+      emitLinkDecision(callbacks, link, depth, 'skipped', 'page-budget-exhausted', score)
+    );
 
     callbacks.onReasoning?.({
       step: 3,
       type: 'synthesize',
-      thought: `Gathered content from ${relevantLinks.length} linked pages. Synthesizing answer...`,
+      thought: `Retrieved ${currentVisits.filter(visit => visit.status === 'success').length} of ${attemptedPages} attempted pages across ${deepestAttempted} depth level${deepestAttempted === 1 ? '' : 's'}. Synthesizing answer...`,
+      timestamp: Date.now(),
+    });
+  }
+
+  if (shouldFollow && content.links.length === 0) {
+    callbacks.onReasoning?.({
+      step: 2,
+      type: 'synthesize',
+      thought: 'Research was requested, but no links were found in the readable page content.',
       timestamp: Date.now(),
     });
   }
@@ -116,16 +306,19 @@ export async function analyzeWithReasoning(
   }
 
   // Generate final answer
-  const prompt = buildPrompt(context, question, content.url, content.title, history);
+  const prompt = buildPrompt(context, question, content.url, content.title, history, currentVisits);
+  signal?.throwIfAborted();
+  logStage('generation-started', { retrievedPages: currentVisits.length });
 
   for await (const result of router.streamComplete(
     question,
     {
       hasLinks: shouldFollow,
-      contentLength: context.length + history.reduce((length, message) => length + message.content.length, 0),
+      contentLength:
+        context.length + history.reduce((length, message) => length + message.content.length, 0),
     },
     prompt,
-    { temperature: 0.7, maxTokens: 4096 }
+    { temperature: 0.7, maxTokens: 4096, signal }
   )) {
     callbacks.onChunk(result.chunk);
   }
@@ -138,51 +331,214 @@ export async function analyzeWithReasoning(
   });
 
   callbacks.onDone?.();
+  logStage('completed');
+}
+
+function emitLinkDecision(
+  callbacks: AnalysisCallbacks,
+  link: LinkInfo,
+  depth: number,
+  outcome: 'selected' | 'discarded' | 'skipped',
+  reason: string,
+  score?: number
+): void {
+  const decision: LinkDecision = {
+    outcome,
+    reason,
+    depth,
+    score,
+    title: link.text,
+    url: link.url,
+    timestamp: Date.now(),
+  };
+  console.info('[research]', 'link-decision', decision);
+  callbacks.onLinkDecision?.(decision);
 }
 
 async function classifyLinks(
   router: ModelRouter,
   links: TabContent['links'],
-  question: string
+  question: string,
+  signal?: AbortSignal
 ): Promise<number[]> {
   if (links.length === 0) return [];
 
   const prompt = `Score each link 0-1 for relevance to: "${question}"
 
 Links:
-${links.map((l, i) => `${i + 1}. ${l.text} - ${l.url}`).join('\n')}
+${links.map((l, i) => `${i + 1}. ${l.text} - ${l.url} - Context: ${l.context || 'none'}`).join('\n')}
 
+Navigation, account, authentication, legal, create/edit, and site-management links are irrelevant.
 Return only JSON array: [0.9, 0.1, ...]`;
 
   try {
     const result = await router.complete(question, { hasLinks: true, contentLength: 0 }, prompt, {
       temperature: 0.1,
       maxTokens: 256,
+      signal,
     });
     const text = typeof result === 'string' ? result : result.text;
 
     const match = text.match(/\[[\d.,\s]+\]/);
-    if (match) return JSON.parse(match[0]).map((n: number) => Math.max(0, Math.min(1, n)));
-  } catch {
-    const terms = question.toLowerCase().split(/\W+/).filter(Boolean);
-    return links.map(link => {
-      const haystack = `${link.text} ${link.url} ${link.context || ''}`.toLowerCase();
-      return terms.some(term => haystack.includes(term)) ? 0.9 : 0.1;
+    if (match) {
+      const scores = JSON.parse(match[0]).map((n: number) => Math.max(0, Math.min(1, n)));
+      if (scores.length === links.length) {
+        console.info('[research]', 'relevance-scoring', {
+          method: 'model',
+          linkCount: links.length,
+          uniform: links.length > 1 && scores.every((score: number) => score === scores[0]),
+        });
+        return scores;
+      }
+    }
+  } catch (error) {
+    console.warn('[research]', 'relevance-scoring-fallback', {
+      reason: error instanceof Error ? error.message : String(error),
+      linkCount: links.length,
     });
+    return scoreLinksByKeywords(links, question);
   }
 
-  return links.map(() => 0.5);
+  console.warn('[research]', 'relevance-scoring-fallback', {
+    reason: 'The model response did not contain one score per link.',
+    linkCount: links.length,
+  });
+  return scoreLinksByKeywords(links, question);
 }
 
-async function fetchLinkContent(url: string): Promise<string | null> {
+function scoreLinksByKeywords(links: TabContent['links'], question: string): number[] {
+  const terms = meaningfulTerms(question);
+  return links.map(link => {
+    const haystack = `${link.text} ${link.url} ${link.context || ''}`.toLowerCase();
+    if (terms.some(term => haystack.includes(term))) return 0.9;
+    return /\/(?:pull-requests|browse|issues|display)\b/i.test(link.url) ? 0.6 : 0.1;
+  });
+}
+
+function getInvalidPageReason(content: string, title: string): string | undefined {
+  const sample = `${title}\n${content.slice(0, 2000)}`;
+  if (/\bHTTP Status 4\d\d\b/i.test(sample)) return 'The source returned an HTTP error page.';
+  if (/\b(?:Page Not Found|The page doesn['’]t exist|We can['’]t find that page)\b/i.test(sample)) {
+    return 'The source returned a page-not-found response.';
+  }
+  if (/\b(?:Access Denied|You do not have permission to view this page)\b/i.test(sample)) {
+    return 'The source returned an access-denied page.';
+  }
+  return undefined;
+}
+
+function isRelevantChildLink(
+  link: LinkInfo,
+  score: number,
+  question: string,
+  parentContent: string,
+  rootEvidenceIdentifiers: Set<string>
+): boolean {
+  if (score >= 0.75) return true;
+
+  const identifiers = extractEvidenceIdentifiers(`${link.text} ${link.url} ${link.context || ''}`);
+  if ([...identifiers].some(identifier => rootEvidenceIdentifiers.has(identifier))) return true;
+
+  const parentIdentifiers = extractEvidenceIdentifiers(parentContent);
+  if ([...identifiers].some(identifier => parentIdentifiers.has(identifier))) return true;
+
+  const haystack = `${link.text} ${link.url} ${link.context || ''}`.toLowerCase();
+  return meaningfulTerms(question).some(term => haystack.includes(term));
+}
+
+function meaningfulTerms(value: string): string[] {
+  const ignored = new Set([
+    'about',
+    'answer',
+    'based',
+    'context',
+    'data',
+    'document',
+    'documentation',
+    'from',
+    'generate',
+    'information',
+    'links',
+    'page',
+    'please',
+    'source',
+    'supporting',
+    'summary',
+    'that',
+    'them',
+    'this',
+    'using',
+    'visit',
+    'with',
+  ]);
+  return value
+    .toLowerCase()
+    .split(/\W+/)
+    .filter(term => term.length > 3 && !ignored.has(term));
+}
+
+function extractEvidenceIdentifiers(value: string): Set<string> {
+  const ticketKeys = value.toUpperCase().match(/\b[A-Z]{2,10}-\d+\b/g) || [];
+  const pullRequests = (value.match(/\b(?:pull-requests?|pr)[\s/#-]*\d+\b/gi) || []).map(match =>
+    match.toUpperCase()
+  );
+  return new Set([...ticketKeys, ...pullRequests]);
+}
+
+function isLikelyNavigationLink(link: LinkInfo): boolean {
+  const label = link.text.trim().toLowerCase();
+  if (
+    /^(?:people|tasks|create|copy|edit|profile|calendar|calendars|analytics|help|online help|home|dashboard|log in|log out|add comment|find filters|view in hierarchy|use global relay sso account|master subscription agreement|evaluation agreement|ai terms|privacy policy|recently viewed|recently worked on)$/i.test(
+      label
+    )
+  ) {
+    return true;
+  }
+
+  try {
+    const url = new URL(link.url);
+    if (/^(?:www\.)?google\./i.test(url.hostname) && url.pathname === '/search') return true;
+  } catch {
+    return true;
+  }
+
+  return /\/(?:browsepeople|createpage|copypage|reorderpages|diffpagesbyversion|dashboard|calendar|users\/view|plugins\/inlinetasks|secure\/ManageFilters|users\/sign_in|login|logout|aboutconfluence|configurerssfeed|msa|evaluation-agreement|privacy-policy|legal\/productboard-ai-terms)\b/i.test(
+    link.url
+  );
+}
+
+function normalizeUrl(url: string): string {
+  try {
+    const normalized = new URL(url);
+    normalized.hash = '';
+    return normalized.href;
+  } catch {
+    return url;
+  }
+}
+
+function delay(milliseconds: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(resolve, milliseconds);
+    signal?.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(timeout);
+        reject(signal.reason);
+      },
+      { once: true }
+    );
+  });
+}
+
+async function fetchLinkContent(url: string, signal?: AbortSignal): Promise<string | null> {
+  const requestSignal = createTimedSignal(signal, 10000);
   try {
     const requestOptions: RequestInit = {
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; ChromeAI/1.0)' },
       credentials: 'include',
     };
-    if (typeof AbortSignal.timeout === 'function') {
-      requestOptions.signal = AbortSignal.timeout(10000);
-    }
+    requestOptions.signal = requestSignal.signal;
     const response = await fetch(url, requestOptions);
 
     if (!response.ok) return null;
@@ -198,9 +554,30 @@ async function fetchLinkContent(url: string): Promise<string | null> {
 
     const main = doc.querySelector('article, [role="main"], .content, #content, main') || doc.body;
     return main.textContent?.slice(0, 15000) || null;
-  } catch {
+  } catch (error) {
+    if (signal?.aborted) throw error;
     return null;
+  } finally {
+    requestSignal.dispose();
   }
+}
+
+function createTimedSignal(
+  parent: AbortSignal | undefined,
+  timeoutMs: number
+): { signal: AbortSignal; dispose: () => void } {
+  const controller = new AbortController();
+  const abort = () => controller.abort(parent?.reason);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  parent?.addEventListener('abort', abort, { once: true });
+  if (parent?.aborted) abort();
+  return {
+    signal: controller.signal,
+    dispose: () => {
+      clearTimeout(timeout);
+      parent?.removeEventListener('abort', abort);
+    },
+  };
 }
 
 function isBlockedDomain(url: string, blockedDomains: string[]): boolean {
@@ -223,22 +600,90 @@ function buildPrompt(
   question: string,
   url: string,
   title: string,
-  history: ChatMessage[]
+  history: ChatMessage[],
+  currentVisits: LinkVisit[]
 ): string {
   const conversation = history
     .filter(message => !message.isStreaming && message.content)
     .slice(-12)
-    .map(message => `${message.role === 'user' ? 'User' : 'Assistant'}: ${message.content.slice(0, 4000)}`)
+    .map(
+      message =>
+        `${message.role === 'user' ? 'User' : 'Assistant'}: ${message.content.slice(0, 4000)}`
+    )
     .join('\n\n');
+  const sourceStatus = formatSourceStatus(
+    currentVisits.length > 0 ? currentVisits : getLatestVisits(history)
+  );
 
   return `Source: ${title} (${url})
 
 Content:
 ${context.slice(0, 50000)}
 
-${conversation ? `Conversation so far:\n${conversation}\n\n` : ''}Question: ${question}
+${sourceStatus ? `Source retrieval results:\n${sourceStatus}\n\n` : ''}${conversation ? `Conversation so far:\n${conversation}\n\n` : ''}Current question: ${question}
 
-Answer comprehensively using the provided content. Cite sources when possible.`;
+Answer the current question directly. The current question has priority over previous requests and answers. Do not repeat or regenerate a previous summary unless the current question explicitly requests it. Use the source retrieval results as the truth about which links were visited. Cite successfully retrieved sources when possible.`;
+}
+
+function explicitlyRequestsLinkRetrieval(question: string): boolean {
+  return /\b(?:visit|open|follow|fetch|browse|read|access|retry)\b[\s\S]*\b(?:links?|urls?|sources?|supporting documentation)\b|\b(?:links?|urls?|sources?|supporting documentation)\b[\s\S]*\b(?:visit|open|follow|fetch|browse|read|access|retry)\b|\bvisit\s+(?:it|them)\b|\btry again\b/i.test(
+    question
+  );
+}
+
+function explicitlyRequestsAllLinks(question: string): boolean {
+  return /\b(?:all|every)\b[\s\S]*\b(?:links?|urls?|sources?)\b|\b(?:links?|urls?|sources?)\b[\s\S]*\b(?:all|every)\b/i.test(
+    question
+  );
+}
+
+function asksForLinkVisitStatus(question: string): boolean {
+  return /\b(?:did|have|has|were|was)\b[\s\S]*\b(?:visit|visited|fetch|fetched|open|opened|retrieve|retrieved)\b[\s\S]*\b(?:links?|urls?|sources?)\b/i.test(
+    question
+  );
+}
+
+function getLatestVisits(history: ChatMessage[]): LinkVisit[] {
+  return [...history].reverse().find(message => message.linkVisits?.length)?.linkVisits || [];
+}
+
+function formatSourceStatus(visits: LinkVisit[]): string {
+  const finalVisits = new Map<string, LinkVisit>();
+  visits
+    .filter(visit => visit.status !== 'fetching')
+    .forEach(visit => finalVisits.set(visit.url, visit));
+  return [...finalVisits.values()]
+    .map(
+      visit =>
+        `- ${visit.status.toUpperCase()} ${visit.url}${visit.method ? ` via ${visit.method}` : ''}${visit.error ? `: ${visit.error}` : ''}${visit.snippet ? `\n  Retrieved excerpt: ${visit.snippet}` : ''}`
+    )
+    .join('\n');
+}
+
+function buildLinkVisitStatus(history: ChatMessage[]): string {
+  const visits = getLatestVisits(history);
+  const finalVisits = new Map<string, LinkVisit>();
+  visits
+    .filter(visit => visit.status !== 'fetching')
+    .forEach(visit => finalVisits.set(visit.url, visit));
+  const results = [...finalVisits.values()];
+  if (results.length === 0) return 'No links have been visited in this conversation yet.';
+
+  const successful = results.filter(visit => visit.status === 'success');
+  const failed = results.filter(visit => visit.status === 'failed');
+  const lines = [
+    successful.length === results.length
+      ? `Yes. All ${results.length} links were retrieved successfully.`
+      : `No. ${successful.length} of ${results.length} links were retrieved successfully.`,
+  ];
+  if (failed.length > 0) {
+    lines.push(
+      '',
+      'Failed sources:',
+      ...failed.map(visit => `- ${visit.url}${visit.error ? ` — ${visit.error}` : ''}`)
+    );
+  }
+  return lines.join('\n');
 }
 
 export { classifyLinks, fetchLinkContent };

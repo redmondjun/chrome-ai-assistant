@@ -80,6 +80,15 @@ describe('Content Extraction', () => {
       const result = getMainContent();
       expect(result).toBe(document.body);
     });
+
+    it('chooses the richest matching content region for dynamically rendered wiki pages', () => {
+      document.body.innerHTML = `
+        <main>Loading</main>
+        <div class="wiki-content">Detailed wiki content with substantially more useful text.</div>
+      `;
+
+      expect(getMainContent()).toBe(document.querySelector('.wiki-content'));
+    });
   });
 
   describe('extractLinks', () => {
@@ -110,6 +119,33 @@ describe('Content Extraction', () => {
       const links = extractLinks();
       expect(links[0].context).toContain('Check out our pricing page');
     });
+
+    it('extracts plain-text URLs', () => {
+      document.body.innerHTML =
+        '<p>Review https://stash.globalrelay.net/projects/PORTAL/repos/app/pull-requests/1</p>';
+
+      const links = extractLinks();
+
+      expect(links).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            url: 'https://stash.globalrelay.net/projects/PORTAL/repos/app/pull-requests/1',
+          }),
+        ])
+      );
+    });
+
+    it('does not join plain-text URLs across adjacent elements', () => {
+      document.body.innerHTML = `
+        <span>https://stash.example.com/pull-requests/746/overview</span><span>Participates</span>
+      `;
+
+      const links = extractLinks();
+
+      expect(links.map(link => link.url)).toEqual([
+        'https://stash.example.com/pull-requests/746/overview',
+      ]);
+    });
   });
 
   describe('extractMeta', () => {
@@ -132,6 +168,17 @@ describe('Content Extraction', () => {
       expect(content.text).toContain('Title');
       expect(content.text).toContain('Content');
       expect(content.meta.description).toBe('Desc');
+    });
+
+    it('only includes links from the readable content area', () => {
+      document.body.innerHTML = `
+        <nav><a href="https://wiki.example.com/browsepeople.action">People</a></nav>
+        <article><a href="https://stash.example.com/pull-requests/1">Supporting PR</a></article>
+      `;
+
+      const content = extractContent();
+
+      expect(content.links.map(link => link.text)).toEqual(['Supporting PR']);
     });
   });
 });

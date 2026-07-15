@@ -51,6 +51,57 @@ Download latest release from GitHub Releases and load as unpacked extension.
    - `"Write a technical report based on this documentation and its references"`
    - `"Extract all API endpoints mentioned here and in linked pages"`
 
+## Debugging a Chat
+
+To export the conversation currently selected in the side panel, open `chrome://extensions`,
+enable Developer mode, then click **Service worker / Inspect** for Chrome AI Assistant. Run this
+in the Console:
+
+```js
+(async () => {
+  const { 'chrome-ai-conversations': chats = [], 'chrome-ai-active-conversation': activeChatId } =
+    await chrome.storage.local.get(['chrome-ai-conversations', 'chrome-ai-active-conversation']);
+
+  const activeChat = chats.find(chat => chat.id === activeChatId);
+
+  if (!activeChat) {
+    console.error('No active chat found.');
+    return;
+  }
+
+  const json = JSON.stringify(activeChat, null, 2);
+  console.log(json);
+
+  try {
+    await navigator.clipboard.writeText(json);
+    console.info('Active chat JSON copied to clipboard.');
+  } catch {
+    console.info('Clipboard access was unavailable; copy the JSON from the console.');
+  }
+})();
+```
+
+Chat exports can contain sensitive page text and retrieved internal-source excerpts. Redact that
+data before sharing the JSON outside your organization.
+
+### Debugging Link Selection
+
+Link candidates are logged in the extension service worker console so development-time relevance
+mistakes remain auditable. Open `chrome://extensions`, enable Developer mode, click **Service
+worker / Inspect**, and filter the Console for `[research]`.
+
+Each `link-decision` entry records the URL, title, depth, score, outcome, and reason. Outcomes are
+`selected`, `discarded`, or `skipped`. Reasons distinguish relevance thresholds from blocked
+domains, navigation links, duplicates, child-classification limits, and page-budget limits.
+The same records are persisted in the assistant message's `linkDecisions` array and are included
+when exporting the active chat JSON.
+
+The displayed percentage is a candidate selection score, not a calibrated probability that the
+source is relevant. The console records whether scores came from the model or the keyword fallback.
+
+These logs can contain internal URLs and page titles. Redact them before sharing outside your
+organization.
+
 ## Architecture
 
 ```

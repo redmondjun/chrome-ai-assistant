@@ -51,8 +51,10 @@ function SourceList({ links }: { links: LinkVisit[] }) {
               <small>
                 {link.status}
                 {Number.isFinite(link.relevanceScore)
-                  ? ` · ${Math.round(link.relevanceScore * 100)}% relevant`
+                  ? ` · ${Math.round(link.relevanceScore * 100)}% selection score`
                   : ''}
+                {link.method ? ` · ${link.method}` : ''}
+                {link.depth ? ` · depth ${link.depth}` : ''}
               </small>
               {link.error && <small className="danger-text">{link.error}</small>}
             </div>

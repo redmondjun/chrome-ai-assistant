@@ -1,5 +1,10 @@
 import { analyzeWithReasoning, classifyLinks, fetchLinkContent } from './analyze';
+import { fetchLinkContentInTab } from '../content/link-tab-fetcher';
 import type { TabContent } from '@/shared/types';
+
+jest.mock('../content/link-tab-fetcher', () => ({
+  fetchLinkContentInTab: jest.fn(),
+}));
 
 describe('Analysis Pipeline', () => {
   const mockRouter = {
@@ -41,6 +46,7 @@ describe('Analysis Pipeline', () => {
     onChunk: jest.fn(),
     onReasoning: jest.fn(),
     onLinkVisit: jest.fn(),
+    onLinkDecision: jest.fn(),
     onDone: jest.fn(),
   };
 
@@ -50,7 +56,9 @@ describe('Analysis Pipeline', () => {
 
   describe('analyzeWithReasoning', () => {
     it('uses the AI-first decision instead of requiring the word "link"', async () => {
-      mockRouter.complete.mockResolvedValueOnce({ text: 'yes' }).mockResolvedValueOnce({ text: '[0.9, 0.1]' });
+      mockRouter.complete
+        .mockResolvedValueOnce({ text: 'yes' })
+        .mockResolvedValueOnce({ text: '[0.9, 0.1]' });
       mockRouter.streamComplete.mockImplementation(async function* () {
         yield { chunk: 'Answer', usedLocal: true };
       });
@@ -102,7 +110,7 @@ describe('Analysis Pipeline', () => {
     });
 
     it('classifies and fetches relevant links', async () => {
-      mockRouter.complete.mockResolvedValueOnce({ text: 'yes' }).mockResolvedValueOnce({ text: '[0.9, 0.1]' });
+      mockRouter.complete.mockResolvedValue({ text: '[0.9, 0.1]' });
       mockRouter.streamComplete.mockImplementation(async function* () {
         yield { chunk: 'Answer', usedLocal: true };
       });
@@ -163,6 +171,7 @@ describe('Analysis Pipeline', () => {
     });
 
     it('filters out blocked domains', async () => {
+      const consoleInfo = jest.spyOn(console, 'info').mockImplementation(() => undefined);
       mockRouter.complete.mockResolvedValue({ text: '[0.9]' });
       mockRouter.streamComplete.mockImplementation(async function* () {
         yield { chunk: 'Answer', usedLocal: true };
@@ -178,12 +187,207 @@ describe('Analysis Pipeline', () => {
       await analyzeWithReasoning(
         mockRouter as any,
         contentWithBlocked,
-        'question',
+        'Visit the links',
         mockSettings,
         mockCallbacks
       );
 
       expect(mockCallbacks.onLinkVisit).not.toHaveBeenCalled();
+      expect(consoleInfo).toHaveBeenCalledWith(
+        '[research]',
+        'link-decision',
+        expect.objectContaining({
+          outcome: 'discarded',
+          reason: 'blocked-domain',
+          url: 'https://facebook.com/page',
+        })
+      );
+      consoleInfo.mockRestore();
+    });
+
+    it('logs links rejected by relevance scoring', async () => {
+      const consoleInfo = jest.spyOn(console, 'info').mockImplementation(() => undefined);
+      mockRouter.complete.mockResolvedValue({ text: '[0.1, 0.9]' });
+      mockRouter.streamComplete.mockImplementation(async function* () {
+        yield { chunk: 'Answer', usedLocal: false };
+      });
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        text: async () => '<html><body><article>Relevant evidence</article></body></html>',
+      });
+
+      await analyzeWithReasoning(
+        mockRouter as any,
+        mockContent,
+        'Visit the sources',
+        { ...mockSettings, links: { ...mockSettings.links, rateLimitMs: 0 } },
+        mockCallbacks
+      );
+
+      expect(consoleInfo).toHaveBeenCalledWith(
+        '[research]',
+        'link-decision',
+        expect.objectContaining({
+          outcome: 'discarded',
+          reason: 'below-relevance-threshold',
+          score: 0.1,
+          url: 'https://example.com/link1',
+        })
+      );
+      expect(mockCallbacks.onLinkDecision).toHaveBeenCalledWith(
+        expect.objectContaining({
+          outcome: 'discarded',
+          reason: 'below-relevance-threshold',
+          score: 0.1,
+          url: 'https://example.com/link1',
+        })
+      );
+      consoleInfo.mockRestore();
+    });
+
+    it('rejects readable error pages instead of using them as evidence', async () => {
+      mockRouter.complete.mockResolvedValue({ text: '[0.9]' });
+      mockRouter.streamComplete.mockImplementation(async function* () {
+        yield { chunk: 'Answer', usedLocal: false };
+      });
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        text: async () =>
+          "<html><body><article>Page Not Found. We can't find that page.</article></body></html>",
+      });
+
+      await analyzeWithReasoning(
+        mockRouter as any,
+        { ...mockContent, links: [mockContent.links[0]] },
+        'Visit the links',
+        { ...mockSettings, links: { ...mockSettings.links, rateLimitMs: 0 } },
+        mockCallbacks
+      );
+
+      expect(mockCallbacks.onLinkVisit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: 'failed',
+          error: 'The source returned a page-not-found response.',
+        })
+      );
+      expect(mockCallbacks.onLinkDecision).toHaveBeenCalledWith(
+        expect.objectContaining({ outcome: 'discarded', reason: 'invalid-page-content' })
+      );
+    });
+
+    it('answers link-visit status from recorded results without repeating a summary', async () => {
+      const history = [
+        {
+          id: 'assistant-1',
+          role: 'assistant' as const,
+          content: 'Previous long summary',
+          timestamp: 1,
+          linkVisits: [
+            {
+              url: 'https://example.com/pr/1',
+              title: 'PR 1',
+              status: 'failed' as const,
+              relevanceScore: 0.9,
+              timestamp: 1,
+              error: 'Authentication required',
+            },
+          ],
+        },
+      ];
+
+      await analyzeWithReasoning(
+        mockRouter as any,
+        mockContent,
+        'Did you visit all the links?',
+        mockSettings,
+        mockCallbacks,
+        history
+      );
+
+      expect(mockCallbacks.onChunk).toHaveBeenCalledWith(
+        expect.stringContaining('0 of 1 links were retrieved successfully')
+      );
+      expect(mockRouter.streamComplete).not.toHaveBeenCalled();
+    });
+
+    it('follows relevant child links up to the configured depth', async () => {
+      mockRouter.complete.mockResolvedValue({ text: '[0.9]' });
+      mockRouter.streamComplete.mockImplementation(async function* () {
+        yield { chunk: 'Answer using nested evidence', usedLocal: false };
+      });
+      global.fetch = jest.fn().mockRejectedValue(new Error('Worker fetch blocked'));
+      (fetchLinkContentInTab as jest.Mock)
+        .mockResolvedValueOnce({
+          content: 'Parent source evidence',
+          links: [
+            {
+              url: 'https://example.com/browse/child-evidence',
+              text: 'Detailed child evidence',
+              isExternal: false,
+            },
+          ],
+        })
+        .mockResolvedValueOnce({ content: 'Nested source evidence', links: [] });
+
+      await analyzeWithReasoning(
+        mockRouter as any,
+        { ...mockContent, links: [mockContent.links[0]] },
+        'Visit the sources and investigate the evidence',
+        {
+          ...mockSettings,
+          links: { ...mockSettings.links, maxDepth: 2, maxPages: 2, rateLimitMs: 0 },
+        },
+        mockCallbacks
+      );
+
+      expect(fetchLinkContentInTab).toHaveBeenCalledTimes(2);
+      expect(mockCallbacks.onLinkVisit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          url: 'https://example.com/browse/child-evidence',
+          status: 'success',
+        })
+      );
+      expect(mockCallbacks.onReasoning).toHaveBeenCalledWith(
+        expect.objectContaining({ thought: expect.stringContaining('2 depth levels') })
+      );
+    });
+
+    it('visits every selected first-depth source before discovered child links', async () => {
+      mockRouter.complete
+        .mockResolvedValueOnce({ text: '[0.9, 0.8]' })
+        .mockResolvedValueOnce({ text: '[0.9]' });
+      mockRouter.streamComplete.mockImplementation(async function* () {
+        yield { chunk: 'Answer using first-depth evidence', usedLocal: false };
+      });
+      global.fetch = jest.fn().mockRejectedValue(new Error('Worker fetch blocked'));
+      (fetchLinkContentInTab as jest.Mock)
+        .mockResolvedValueOnce({
+          content: 'First root source',
+          links: [
+            {
+              url: 'https://example.com/browse/child-evidence',
+              text: 'Detailed child evidence',
+              isExternal: false,
+            },
+          ],
+        })
+        .mockResolvedValueOnce({ content: 'Second root source', links: [] });
+
+      await analyzeWithReasoning(
+        mockRouter as any,
+        mockContent,
+        'Visit the sources and investigate the evidence',
+        {
+          ...mockSettings,
+          links: { ...mockSettings.links, maxDepth: 2, maxPages: 2, rateLimitMs: 0 },
+        },
+        mockCallbacks
+      );
+
+      expect((fetchLinkContentInTab as jest.Mock).mock.calls.map(([url]) => url)).toEqual([
+        'https://example.com/link1',
+        'https://example.com/link2',
+      ]);
     });
   });
 
@@ -221,6 +425,24 @@ describe('Analysis Pipeline', () => {
 
       const scores = await classifyLinks(mockRouter as any, links, 'pricing');
       expect(scores[0]).toBeGreaterThan(scores[1]);
+    });
+
+    it('keeps uniform model scores when every source may be relevant', async () => {
+      const mockRouter = {
+        complete: jest.fn().mockResolvedValue({ text: '[0.9, 0.9]' }),
+      };
+      const links = [
+        {
+          url: 'https://stash.example.com/projects/APP/repos/app/pull-requests/1',
+          text: 'PR 1',
+          isExternal: true,
+        },
+        { url: 'https://wiki.example.com/browsepeople.action', text: 'People', isExternal: true },
+      ];
+
+      const scores = await classifyLinks(mockRouter as any, links, 'review supporting sources');
+
+      expect(scores).toEqual([0.9, 0.9]);
     });
   });
 

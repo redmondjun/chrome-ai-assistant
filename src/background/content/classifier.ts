@@ -31,7 +31,8 @@ Output ONLY a JSON array of numbers: [0.8, 0.2, ...]`;
 export async function shouldFollowLinks(
   router: ModelRouter,
   question: string,
-  linkCount: number
+  linkCount: number,
+  signal?: AbortSignal
 ): Promise<boolean> {
   const prompt = `Does this question require visiting links to answer well?
 The current page contains ${linkCount} links that the assistant can visit.
@@ -43,8 +44,17 @@ Answer ONLY "yes" or "no".`;
     const { text } = await router.complete(question, { hasLinks: true, contentLength: 0 }, prompt, {
       temperature: 0,
       maxTokens: 10,
+      signal,
     });
-    return text.toLowerCase().includes('yes');
+    return (
+      text.toLowerCase().includes('yes') ||
+      /\b(?:generate|write|create|summarize|analyse|analyze|compare|explain|investigate|research|find)\b/i.test(
+        question
+      ) ||
+      /\b(link|source|reference|citation|ticket|pull request|pr|supporting material|peer feedback)\b/i.test(
+        question
+      )
+    );
   } catch {
     return /\b(link|source|reference|citation|ticket|pull request|pr|supporting material|peer feedback)\b/i.test(
       question

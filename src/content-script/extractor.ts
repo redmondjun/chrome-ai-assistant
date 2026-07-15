@@ -1,6 +1,9 @@
 import type { TabContent, LinkInfo } from '@/shared/types';
 
 const READABILITY_SELECTORS = [
+  '.wiki-content',
+  '#main-content',
+  '#content-body',
   'article',
   '[role="main"]',
   '.content',
@@ -42,11 +45,16 @@ export function cleanElement(el: Element): void {
 }
 
 export function getMainContent(): Element | null {
+  const candidates = new Set<Element>();
   for (const sel of READABILITY_SELECTORS) {
-    const el = document.querySelector(sel);
-    if (el) return el;
+    document.querySelectorAll(sel).forEach(element => candidates.add(element));
   }
-  return document.body;
+  return (
+    [...candidates].sort(
+      (left, right) =>
+        (right.textContent?.trim().length || 0) - (left.textContent?.trim().length || 0)
+    )[0] || document.body
+  );
 }
 
 export function extractText(el: Element): string {
@@ -65,9 +73,10 @@ export function extractText(el: Element): string {
   return texts.join('\n\n');
 }
 
-export function extractLinks(): LinkInfo[] {
+export function extractLinks(root: Element = document.body): LinkInfo[] {
   const links: LinkInfo[] = [];
-  const anchors = document.querySelectorAll('a[href]');
+  const seenUrls = new Set<string>();
+  const anchors = root.querySelectorAll<HTMLAnchorElement>('a[href]');
 
   anchors.forEach(anchor => {
     const href = anchor.getAttribute('href');
@@ -79,8 +88,10 @@ export function extractLinks(): LinkInfo[] {
       if (!text || text.length <= 1 || text.length > 200) return;
       if (!url.startsWith('http://') && !url.startsWith('https://')) return;
 
-      const context = getLinkContext(anchor as HTMLAnchorElement);
+      const context = getLinkContext(anchor);
 
+      if (seenUrls.has(url)) return;
+      seenUrls.add(url);
       links.push({
         url,
         text,
@@ -92,6 +103,31 @@ export function extractLinks(): LinkInfo[] {
       // Invalid URL
     }
   });
+
+  const textWalker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+  let textNode: Node | null;
+  while ((textNode = textWalker.nextNode())) {
+    const currentTextNode = textNode;
+    const rawUrls = textNode.textContent?.match(/https?:\/\/[^\s<>"')\]]+/g) || [];
+    rawUrls.forEach(rawUrl => {
+      const url = rawUrl.replace(/[.,;:]+$/, '');
+      if (seenUrls.has(url)) return;
+      try {
+        const parsed = new URL(url);
+        seenUrls.add(url);
+        links.push({
+          url,
+          text: url,
+          context:
+            currentTextNode.parentElement?.textContent?.trim().slice(0, 300) ||
+            'URL included as page text',
+          isExternal: parsed.hostname !== window.location.hostname,
+        });
+      } catch {
+        // Invalid URL
+      }
+    });
+  }
 
   return links;
 }
@@ -144,7 +180,7 @@ export function extractContent(): TabContent {
     url: window.location.href,
     title: document.title,
     text: extractText(clone),
-    links: extractLinks(),
+    links: extractLinks(clone),
     meta: extractMeta(),
     timestamp: Date.now(),
   };
