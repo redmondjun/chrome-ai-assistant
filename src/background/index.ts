@@ -5,21 +5,43 @@ import { getTabContent } from './content/tab-content';
 import type { BackgroundMessage, TabContent, StorageSettings } from '@/shared/types';
 
 let router: ModelRouter | null = null;
+let routerInitialization: Promise<ModelRouter> | null = null;
 let currentContent: TabContent | null = null;
 const activeAnalyses = new Map<string, AbortController>();
 
-async function init() {
-  const settings = await getSettings();
-  router = createRouter(settings.model);
-  await router.ensureLocalReady();
+function initializeRouter(): Promise<ModelRouter> {
+  if (router) return Promise.resolve(router);
+  if (routerInitialization) return routerInitialization;
+
+  routerInitialization = getSettings()
+    .then(settings => {
+      const initializedRouter = createRouter(settings.model);
+      router = initializedRouter;
+      void initializedRouter.ensureLocalReady().catch(error => {
+        console.error('[router]', 'Local model initialization failed:', error);
+      });
+      return initializedRouter;
+    })
+    .catch(error => {
+      console.error('[router]', 'Initialization failed:', error);
+      throw error;
+    })
+    .finally(() => {
+      routerInitialization = null;
+    });
+
+  return routerInitialization;
 }
 
-init();
+void initializeRouter().catch(() => undefined);
 
 onSettingsChanged(async settings => {
-  if (router) {
-    router.updateSettings(settings.model);
-    await router.ensureLocalReady();
+  try {
+    const activeRouter = await initializeRouter();
+    activeRouter.updateSettings(settings.model);
+    await activeRouter.ensureLocalReady();
+  } catch (error) {
+    console.error('[router]', 'Could not apply updated settings:', error);
   }
 });
 
@@ -38,8 +60,8 @@ chrome.runtime.onMessage.addListener((message: BackgroundMessage, sender, sendRe
         }
 
         case 'ASK_QUESTION': {
-          if (!router) throw new Error('Router not initialized');
           if (!message.question) throw new Error('No question provided');
+          const activeRouter = await initializeRouter();
 
           let content = message.context || currentContent;
           if (!content) {
@@ -95,7 +117,7 @@ chrome.runtime.onMessage.addListener((message: BackgroundMessage, sender, sendRe
           };
 
           analyzeWithReasoning(
-            router,
+            activeRouter,
             content,
             message.question,
             settings,
