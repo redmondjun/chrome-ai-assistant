@@ -1,6 +1,13 @@
 import React from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
-jest.mock('marked', () => ({ marked: { parse: (value: string) => `<p>${value}</p>` } }));
+jest.mock('marked', () => ({
+  marked: {
+    parse: (value: string) =>
+      value === 'answer-link'
+        ? '<p><a href="https://example.com/evidence">Open evidence</a></p>'
+        : `<p>${value}</p>`,
+  },
+}));
 import { AnswerDetails } from './AnswerDetails';
 import { Composer } from './Composer';
 import { Conversation } from './Conversation';
@@ -69,6 +76,21 @@ describe('side panel UI', () => {
       />
     );
     expect(screen.getByText(/request failed/i)).toBeInTheDocument();
+  });
+
+  it('opens web links from generated answers in a browser tab', () => {
+    render(
+      <MessageItem
+        message={{ id: '1', role: 'assistant', content: 'answer-link', timestamp: Date.now() }}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('link', { name: 'Open evidence' }));
+
+    expect(chrome.tabs.create).toHaveBeenCalledWith({
+      url: 'https://example.com/evidence',
+      active: true,
+    });
   });
 
   it('shows the current source-research progress while streaming', () => {

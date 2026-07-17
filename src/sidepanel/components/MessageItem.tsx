@@ -32,13 +32,38 @@ export function MessageItem({ message }: { message: ChatMessage }) {
       )}
       <div className="message-body">
         {message.content ? (
-          <div className="message-content" dangerouslySetInnerHTML={{ __html: renderedContent }} />
+          <div
+            className="message-content"
+            dangerouslySetInnerHTML={{ __html: renderedContent }}
+            onClick={isUser ? undefined : handleAnswerLinkClick}
+          />
         ) : (
           <TypingIndicator />
         )}
       </div>
     </article>
   );
+}
+
+function handleAnswerLinkClick(event: React.MouseEvent<HTMLDivElement>) {
+  if (!(event.target instanceof Element)) return;
+
+  const anchor = event.target.closest('a');
+  if (!(anchor instanceof HTMLAnchorElement)) return;
+
+  const url = new URL(anchor.href);
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return;
+
+  event.preventDefault();
+  void openAnswerLink(url.href);
+}
+
+async function openAnswerLink(url: string) {
+  try {
+    await chrome.tabs.create({ url, active: true });
+  } catch (error) {
+    console.error('[chat]', 'Could not open answer link:', error);
+  }
 }
 
 function StreamingProgress({ message }: { message: ChatMessage }) {
