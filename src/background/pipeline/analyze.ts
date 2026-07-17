@@ -12,6 +12,11 @@ import type {
   LinkDecision,
 } from '@/shared/types';
 
+const LINK_SCORING_BATCH_SIZE = 10;
+const LINK_SCORING_SLOW_MS = 15000;
+const LINK_SCORING_TIMEOUT_MS = 60000;
+const LINK_CONTEXT_LIMIT = 240;
+
 export interface AnalysisCallbacks {
   onChunk: (chunk: string) => void;
   onReasoning?: (step: ReasoningStep) => void;
@@ -35,6 +40,13 @@ export async function analyzeWithReasoning(
   const startedAt = Date.now();
   const logStage = (stage: string, details: object = {}) =>
     console.info('[analysis]', stage, { elapsedMs: Date.now() - startedAt, ...details });
+  const reportScoringProgress = (thought: string) =>
+    callbacks.onReasoning?.({
+      step: 2,
+      type: 'classify',
+      thought,
+      timestamp: Date.now(),
+    });
   logStage('started', { linkCount: content.links.length });
   signal?.throwIfAborted();
   callbacks.onReasoning?.({
@@ -89,8 +101,21 @@ export async function analyzeWithReasoning(
       `${content.text}\n${availableLinks.map(link => `${link.text} ${link.url}`).join('\n')}`
     );
 
+    callbacks.onReasoning?.({
+      step: 2,
+      type: 'classify',
+      thought: `Scoring ${availableLinks.length} candidate links for relevance to your request...`,
+      timestamp: Date.now(),
+    });
+
     // Classify links for relevance
-    const linkScores = await classifyLinks(router, availableLinks, question, signal);
+    const linkScores = await classifyLinks(
+      router,
+      availableLinks,
+      question,
+      signal,
+      reportScoringProgress
+    );
 
     const scoredLinks = availableLinks.map((link, i) => ({ link, score: linkScores[i] }));
     const allRelevantLinks = explicitlyRequestsAllLinks(question)
@@ -214,7 +239,21 @@ export async function analyzeWithReasoning(
                   'child-classification-limit'
                 )
               );
-            const childScores = await classifyLinks(router, childLinks, question, signal);
+            if (childLinks.length > 0) {
+              callbacks.onReasoning?.({
+                step: 2,
+                type: 'classify',
+                thought: `Scoring ${childLinks.length} links discovered in ${link.text || link.url}...`,
+                timestamp: Date.now(),
+              });
+            }
+            const childScores = await classifyLinks(
+              router,
+              childLinks,
+              question,
+              signal,
+              reportScoringProgress
+            );
             const relevantChildren = childLinks
               .map((child, index) => ({ link: child, score: childScores[index], depth: depth + 1 }))
               .filter(child => {
@@ -359,24 +398,74 @@ async function classifyLinks(
   router: ModelRouter,
   links: TabContent['links'],
   question: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onProgress?: (message: string) => void
 ): Promise<number[]> {
   if (links.length === 0) return [];
 
+  const scores: number[] = [];
+  for (let start = 0; start < links.length; start += LINK_SCORING_BATCH_SIZE) {
+    signal?.throwIfAborted();
+    const batch = links.slice(start, start + LINK_SCORING_BATCH_SIZE);
+    const end = start + batch.length;
+    const batchLabel = `${start + 1}-${end} of ${links.length}`;
+    onProgress?.(`Scoring links ${batchLabel}...`);
+    scores.push(
+      ...(await classifyLinkBatch(router, batch, question, batchLabel, signal, onProgress))
+    );
+    onProgress?.(`Finished scoring links ${batchLabel}.`);
+  }
+  return scores;
+}
+
+async function classifyLinkBatch(
+  router: ModelRouter,
+  links: TabContent['links'],
+  question: string,
+  batchLabel: string,
+  signal?: AbortSignal,
+  onProgress?: (message: string) => void
+): Promise<number[]> {
   const prompt = `Score each link 0-1 for relevance to: "${question}"
 
 Links:
-${links.map((l, i) => `${i + 1}. ${l.text} - ${l.url} - Context: ${l.context || 'none'}`).join('\n')}
+${links.map((l, i) => `${i + 1}. ${l.text.slice(0, LINK_CONTEXT_LIMIT)} - ${l.url} - Context: ${(l.context || 'none').slice(0, LINK_CONTEXT_LIMIT)}`).join('\n')}
 
 Navigation, account, authentication, legal, create/edit, and site-management links are irrelevant.
 Return only JSON array: [0.9, 0.1, ...]`;
 
+  const scoringController = new AbortController();
+  const abortScoring = () => scoringController.abort(signal?.reason);
+  signal?.addEventListener('abort', abortScoring, { once: true });
+  if (signal?.aborted) abortScoring();
+  const timeoutError = new DOMException(
+    `Link scoring batch timed out after ${LINK_SCORING_TIMEOUT_MS / 1000} seconds.`,
+    'TimeoutError'
+  );
+  const slowId = setTimeout(
+    () =>
+      onProgress?.(
+        `Still scoring links ${batchLabel}; the model is responding slowly, so this batch is still running.`
+      ),
+    LINK_SCORING_SLOW_MS
+  );
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      scoringController.abort(timeoutError);
+      reject(timeoutError);
+    }, LINK_SCORING_TIMEOUT_MS);
+  });
+
   try {
-    const result = await router.complete(question, { hasLinks: true, contentLength: 0 }, prompt, {
-      temperature: 0.1,
-      maxTokens: 256,
-      signal,
-    });
+    const result = await Promise.race([
+      router.complete(question, { hasLinks: true, contentLength: 0 }, prompt, {
+        temperature: 0.1,
+        maxTokens: 256,
+        signal: scoringController.signal,
+      }),
+      timeout,
+    ]);
     const text = typeof result === 'string' ? result : result.text;
 
     const match = text.match(/\[[\d.,\s]+\]/);
@@ -386,23 +475,44 @@ Return only JSON array: [0.9, 0.1, ...]`;
         console.info('[research]', 'relevance-scoring', {
           method: 'model',
           linkCount: links.length,
+          batch: batchLabel,
           uniform: links.length > 1 && scores.every((score: number) => score === scores[0]),
         });
         return scores;
       }
     }
   } catch (error) {
+    if (signal?.aborted) throw error;
+    const reason =
+      error instanceof DOMException && error.name === 'TimeoutError'
+        ? `timed out after ${LINK_SCORING_TIMEOUT_MS / 1000} seconds`
+        : error instanceof Error
+          ? error.message
+          : String(error);
     console.warn('[research]', 'relevance-scoring-fallback', {
-      reason: error instanceof Error ? error.message : String(error),
+      reason,
       linkCount: links.length,
+      batch: batchLabel,
     });
+    onProgress?.(
+      `AI scoring for links ${batchLabel} did not finish (${reason}). Using local relevance matching for this batch.`
+    );
     return scoreLinksByKeywords(links, question);
+  } finally {
+    clearTimeout(slowId);
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
+    signal?.removeEventListener('abort', abortScoring);
   }
 
+  const reason = 'The model response did not contain one score per link.';
   console.warn('[research]', 'relevance-scoring-fallback', {
-    reason: 'The model response did not contain one score per link.',
+    reason,
     linkCount: links.length,
+    batch: batchLabel,
   });
+  onProgress?.(
+    `AI scoring for links ${batchLabel} returned an invalid result. Using local relevance matching for this batch.`
+  );
   return scoreLinksByKeywords(links, question);
 }
 

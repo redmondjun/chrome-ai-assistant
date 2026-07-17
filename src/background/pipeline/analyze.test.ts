@@ -414,6 +414,7 @@ describe('Analysis Pipeline', () => {
     });
 
     it('falls back to keyword matching on error', async () => {
+      const onProgress = jest.fn();
       const mockRouter = {
         complete: jest.fn().mockRejectedValue(new Error('API error')),
       };
@@ -423,8 +424,72 @@ describe('Analysis Pipeline', () => {
         { url: 'https://example.com/about', text: 'About', isExternal: false },
       ];
 
-      const scores = await classifyLinks(mockRouter as any, links, 'pricing');
+      const scores = await classifyLinks(
+        mockRouter as any,
+        links,
+        'pricing',
+        undefined,
+        onProgress
+      );
       expect(scores[0]).toBeGreaterThan(scores[1]);
+      expect(onProgress).toHaveBeenCalledWith(expect.stringContaining('API error'));
+    });
+
+    it('warns when scoring is slow before eventually falling back', async () => {
+      jest.useFakeTimers();
+      try {
+        const onProgress = jest.fn();
+        const mockRouter = { complete: jest.fn(() => new Promise(() => undefined)) };
+        const links = [{ url: 'https://example.com/pricing', text: 'Pricing', isExternal: false }];
+
+        const scoresPromise = classifyLinks(
+          mockRouter as any,
+          links,
+          'pricing',
+          undefined,
+          onProgress
+        );
+        await jest.advanceTimersByTimeAsync(15000);
+        expect(onProgress).toHaveBeenCalledWith(expect.stringContaining('still running'));
+
+        await jest.advanceTimersByTimeAsync(45000);
+
+        await expect(scoresPromise).resolves.toEqual([0.9]);
+        expect(onProgress).toHaveBeenCalledWith(
+          expect.stringContaining('timed out after 60 seconds')
+        );
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('scores large link sets in visible batches', async () => {
+      const onProgress = jest.fn();
+      const mockRouter = {
+        complete: jest
+          .fn()
+          .mockResolvedValueOnce({ text: `[${Array(10).fill(0.8).join(',')}]` })
+          .mockResolvedValueOnce({ text: `[${Array(10).fill(0.7).join(',')}]` })
+          .mockResolvedValueOnce({ text: `[${Array(5).fill(0.6).join(',')}]` }),
+      };
+      const links = Array.from({ length: 25 }, (_, index) => ({
+        url: `https://example.com/${index + 1}`,
+        text: `Link ${index + 1}`,
+        isExternal: false,
+      }));
+
+      const scores = await classifyLinks(
+        mockRouter as any,
+        links,
+        'supporting evidence',
+        undefined,
+        onProgress
+      );
+
+      expect(mockRouter.complete).toHaveBeenCalledTimes(3);
+      expect(scores).toHaveLength(25);
+      expect(onProgress).toHaveBeenCalledWith('Scoring links 1-10 of 25...');
+      expect(onProgress).toHaveBeenCalledWith('Finished scoring links 21-25 of 25.');
     });
 
     it('keeps uniform model scores when every source may be relevant', async () => {
