@@ -154,6 +154,12 @@ export async function analyzeWithReasoning(
       const { link, score, depth } = queue.shift()!;
       attemptedPages++;
       deepestAttempted = Math.max(deepestAttempted, depth);
+      callbacks.onReasoning?.({
+        step: 2,
+        type: 'fetch',
+        thought: `Opening depth ${depth} source ${attemptedPages}: ${link.text || link.url}`,
+        timestamp: Date.now(),
+      });
       callbacks.onLinkVisit?.({
         url: link.url,
         title: link.text,
@@ -170,6 +176,12 @@ export async function analyzeWithReasoning(
         let discoveredLinks: LinkInfo[] = [];
         let fetchedTitle = link.text;
         if (!fetched) {
+          callbacks.onReasoning?.({
+            step: 2,
+            type: 'fetch',
+            thought: `Direct retrieval returned no readable content for ${link.text || link.url}; trying an authenticated browser tab...`,
+            timestamp: Date.now(),
+          });
           const tabResult = await fetchLinkContentInTab(link.url, signal);
           fetched = tabResult.content || null;
           failure = tabResult.error || '';
@@ -192,6 +204,12 @@ export async function analyzeWithReasoning(
             };
             currentVisits.push(visit);
             callbacks.onLinkVisit?.(visit);
+            callbacks.onReasoning?.({
+              step: 2,
+              type: 'extract',
+              thought: `Could not use ${link.text || link.url}: ${invalidReason}`,
+              timestamp: Date.now(),
+            });
             emitLinkDecision(callbacks, link, depth, 'discarded', 'invalid-page-content', score);
             continue;
           }
@@ -210,6 +228,12 @@ export async function analyzeWithReasoning(
           };
           currentVisits.push(visit);
           callbacks.onLinkVisit?.(visit);
+          callbacks.onReasoning?.({
+            step: 2,
+            type: 'extract',
+            thought: `Read ${link.text || link.url} using ${method}.`,
+            timestamp: Date.now(),
+          });
 
           if (depth < settings.links.maxDepth && discoveredLinks.length > 0) {
             const childCandidates = discoveredLinks.filter(child => {
@@ -294,6 +318,12 @@ export async function analyzeWithReasoning(
           };
           currentVisits.push(visit);
           callbacks.onLinkVisit?.(visit);
+          callbacks.onReasoning?.({
+            step: 2,
+            type: 'extract',
+            thought: `Could not read ${link.text || link.url}: ${visit.error}`,
+            timestamp: Date.now(),
+          });
         }
       } catch (error) {
         const visit: LinkVisit = {
@@ -307,6 +337,12 @@ export async function analyzeWithReasoning(
         };
         currentVisits.push(visit);
         callbacks.onLinkVisit?.(visit);
+        callbacks.onReasoning?.({
+          step: 2,
+          type: 'extract',
+          thought: `Could not read ${link.text || link.url}: ${visit.error}`,
+          timestamp: Date.now(),
+        });
       }
 
       if (queue.length > 0 && settings.links.rateLimitMs > 0) {

@@ -79,6 +79,12 @@ describe('Analysis Pipeline', () => {
       expect(mockCallbacks.onLinkVisit).toHaveBeenCalledWith(
         expect.objectContaining({ url: 'https://example.com/link1', status: 'success' })
       );
+      expect(mockCallbacks.onReasoning).toHaveBeenCalledWith(
+        expect.objectContaining({ thought: expect.stringContaining('Opening depth 1 source 1') })
+      );
+      expect(mockCallbacks.onReasoning).toHaveBeenCalledWith(
+        expect.objectContaining({ thought: expect.stringContaining('Read Link 1') })
+      );
     });
 
     it('emits reasoning steps', async () => {

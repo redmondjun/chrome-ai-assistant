@@ -44,7 +44,7 @@ describe('side panel UI', () => {
 
   it('only shows answer details when metadata exists', () => {
     const { rerender } = render(<AnswerDetails />);
-    expect(screen.queryByText('Details')).not.toBeInTheDocument();
+    expect(screen.queryByText('Reasoning')).not.toBeInTheDocument();
     rerender(
       <AnswerDetails
         reasoning={[
@@ -52,7 +52,7 @@ describe('side panel UI', () => {
         ]}
       />
     );
-    expect(screen.getByText('Details')).toBeInTheDocument();
+    expect(screen.getByText('Reasoning')).toBeInTheDocument();
     expect(screen.getByText('Checking the page context')).toBeInTheDocument();
   });
 
@@ -69,6 +69,69 @@ describe('side panel UI', () => {
       />
     );
     expect(screen.getByText(/request failed/i)).toBeInTheDocument();
+  });
+
+  it('shows the current source-research progress while streaming', () => {
+    render(
+      <MessageItem
+        message={{
+          id: '1',
+          role: 'assistant',
+          content: '',
+          timestamp: Date.now(),
+          isStreaming: true,
+          reasoning: [
+            { step: 1, type: 'fetch', thought: 'Researching sources', timestamp: Date.now() },
+            { step: 2, type: 'extract', thought: 'Reading source content', timestamp: Date.now() },
+          ],
+          linkVisits: [
+            {
+              url: 'https://example.com/finished',
+              title: 'Finished source',
+              status: 'fetching',
+              relevanceScore: 0.9,
+              timestamp: Date.now(),
+            },
+            {
+              url: 'https://example.com/finished',
+              title: 'Finished source',
+              status: 'success',
+              relevanceScore: 0.9,
+              timestamp: Date.now(),
+            },
+            {
+              url: 'https://example.com/current',
+              title: 'Current source',
+              status: 'fetching',
+              relevanceScore: 0.8,
+              timestamp: Date.now(),
+            },
+          ],
+        }}
+      />
+    );
+
+    expect(screen.getByRole('status')).toHaveTextContent('Opening Current source');
+    expect(screen.getByRole('status')).toHaveTextContent('1 source read');
+    expect(screen.getByRole('status')).toHaveTextContent('0s elapsed');
+    expect(screen.getByText('Reasoning').closest('details')).toHaveAttribute('open');
+    expect(screen.getByText('Sources visited').closest('details')).toHaveAttribute('open');
+  });
+
+  it('closes reasoning after the answer is generated', () => {
+    const message = {
+      id: '1',
+      role: 'assistant' as const,
+      content: '',
+      timestamp: Date.now(),
+      isStreaming: true,
+      reasoning: [{ step: 1, type: 'classify' as const, thought: 'Analyzing', timestamp: 1 }],
+    };
+    const { rerender } = render(<MessageItem message={message} />);
+    expect(screen.getByText('Reasoning').closest('details')).toHaveAttribute('open');
+
+    rerender(<MessageItem message={{ ...message, content: 'Answer', isStreaming: false }} />);
+    expect(screen.getByText('Reasoning').closest('details')).not.toHaveAttribute('open');
   });
 
   it('does not pull the reader back to the bottom while streaming updates arrive', () => {
