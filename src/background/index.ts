@@ -186,7 +186,7 @@ chrome.runtime.onMessage.addListener((message: BackgroundMessage, sender, sendRe
           sendResponse({ error: 'Unknown message type' });
       }
     } catch (error) {
-      sendResponse({ error: String(error) });
+      sendResponse({ error: error instanceof Error ? error.message : String(error) });
     }
   })();
   return true;

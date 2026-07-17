@@ -114,7 +114,7 @@ export function useChat(page: TabContent | null) {
           finishMessage(message.messageId);
           break;
         case 'ERROR':
-          finishMessage(message.messageId, `Error: ${message.message}`);
+          finishMessage(message.messageId, formatChatError(message.message));
           break;
       }
     };
@@ -158,8 +158,7 @@ export function useChat(page: TabContent | null) {
         });
         if (response?.error) throw new Error(response.error);
       } catch (sendError) {
-        const error = sendError instanceof Error ? sendError.message : String(sendError);
-        finishMessage(assistantMessage.id, `Error: ${error}`);
+        finishMessage(assistantMessage.id, formatChatError(sendError));
       }
     },
     [activeConversationId, finishMessage, input, isLoading, messages, page]
@@ -202,6 +201,11 @@ export function useChat(page: TabContent | null) {
     send,
     stop,
   };
+}
+
+function formatChatError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return `Error: ${message.replace(/^(?:Error:\s*)+/i, '')}`;
 }
 
 function createConversation(): ChatConversation {
