@@ -29,6 +29,11 @@ const DEFAULT_LINK_FOLLOWING: LinkFollowSettings = {
 export const DEFAULT_SETTINGS: StorageSettings = {
   model: DEFAULT_MODEL_SETTINGS,
   links: DEFAULT_LINK_FOLLOWING,
+  research: {
+    workerConcurrency: 3,
+    maxRelatedSourcesPerTask: 5,
+    cloudNoticeAccepted: false,
+  },
   ui: {
     theme: 'system',
     showReasoning: true,
