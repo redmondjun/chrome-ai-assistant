@@ -1,6 +1,7 @@
 import { ModelRouter } from '../api/router';
 import { shouldFollowLinks as modelShouldFollowLinks } from '../content/classifier';
 import { fetchLinkContentInTab } from '../content/link-tab-fetcher';
+import { evaluateLinkSafety } from '@/shared/link-safety';
 import type {
   TabContent,
   ReasoningStep,
@@ -87,6 +88,10 @@ export async function analyzeWithReasoning(
 
   if (shouldFollow && content.links.length > 0) {
     const availableLinks = content.links.filter(link => {
+      if (!evaluateLinkSafety(link).safe) {
+        emitLinkDecision(callbacks, link, 1, 'discarded', 'blocked-unsafe-action');
+        return false;
+      }
       if (isBlockedDomain(link.url, settings.links.blockedDomains)) {
         emitLinkDecision(callbacks, link, 1, 'discarded', 'blocked-domain');
         return false;
@@ -237,6 +242,10 @@ export async function analyzeWithReasoning(
 
           if (depth < settings.links.maxDepth && discoveredLinks.length > 0) {
             const childCandidates = discoveredLinks.filter(child => {
+              if (!evaluateLinkSafety(child).safe) {
+                emitLinkDecision(callbacks, child, depth + 1, 'discarded', 'blocked-unsafe-action');
+                return false;
+              }
               if (isBlockedDomain(child.url, settings.links.blockedDomains)) {
                 emitLinkDecision(callbacks, child, depth + 1, 'discarded', 'blocked-domain');
                 return false;
@@ -431,31 +440,48 @@ function emitLinkDecision(
 }
 
 async function classifyLinks(
-  router: ModelRouter,
+  router: Pick<ModelRouter, 'complete'>,
   links: TabContent['links'],
   question: string,
   signal?: AbortSignal,
-  onProgress?: (message: string) => void
+  onProgress?: (message: string) => void,
+  batchConcurrency = 1
 ): Promise<number[]> {
   if (links.length === 0) return [];
 
-  const scores: number[] = [];
-  for (let start = 0; start < links.length; start += LINK_SCORING_BATCH_SIZE) {
-    signal?.throwIfAborted();
-    const batch = links.slice(start, start + LINK_SCORING_BATCH_SIZE);
-    const end = start + batch.length;
-    const batchLabel = `${start + 1}-${end} of ${links.length}`;
-    onProgress?.(`Scoring links ${batchLabel}...`);
-    scores.push(
-      ...(await classifyLinkBatch(router, batch, question, batchLabel, signal, onProgress))
-    );
-    onProgress?.(`Finished scoring links ${batchLabel}.`);
-  }
-  return scores;
+  const starts = Array.from(
+    { length: Math.ceil(links.length / LINK_SCORING_BATCH_SIZE) },
+    (_, index) => index * LINK_SCORING_BATCH_SIZE
+  );
+  const results: number[][] = Array.from({ length: starts.length });
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < starts.length) {
+      if (signal?.aborted) throw signal.reason;
+      const batchIndex = cursor++;
+      const start = starts[batchIndex];
+      const batch = links.slice(start, start + LINK_SCORING_BATCH_SIZE);
+      const batchLabel = `${start + 1}-${start + batch.length} of ${links.length}`;
+      onProgress?.(`Scoring links ${batchLabel}...`);
+      results[batchIndex] = await classifyLinkBatch(
+        router,
+        batch,
+        question,
+        batchLabel,
+        signal,
+        onProgress
+      );
+      onProgress?.(`Finished scoring links ${batchLabel}.`);
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(Math.max(1, batchConcurrency), starts.length) }, worker)
+  );
+  return results.flat();
 }
 
 async function classifyLinkBatch(
-  router: ModelRouter,
+  router: Pick<ModelRouter, 'complete'>,
   links: TabContent['links'],
   question: string,
   batchLabel: string,
@@ -678,6 +704,11 @@ function delay(milliseconds: number, signal?: AbortSignal): Promise<void> {
 }
 
 async function fetchLinkContent(url: string, signal?: AbortSignal): Promise<string | null> {
+  const safety = evaluateLinkSafety({ url });
+  if (!safety.safe) {
+    console.warn('[research]', 'blocked-unsafe-action', { url, reason: safety.reason });
+    return null;
+  }
   const requestSignal = createTimedSignal(signal, 10000);
   try {
     const requestOptions: RequestInit = {

@@ -1,10 +1,12 @@
 import { getTabContent } from './tab-content';
+import { evaluateLinkSafety } from '@/shared/link-safety';
 import type { LinkInfo, TabContent } from '@/shared/types';
 
 const LOAD_TIMEOUT_MS = 20000;
 const CONTENT_TIMEOUT_MS = 10000;
 const CONTENT_POLL_MS = 400;
 const STABLE_READS_REQUIRED = 2;
+const MIN_CONTENT_SETTLE_MS = 1600;
 
 export interface LinkTabFetchResult {
   content?: string;
@@ -18,6 +20,11 @@ export async function fetchLinkContentInTab(
   url: string,
   signal?: AbortSignal
 ): Promise<LinkTabFetchResult> {
+  const safety = evaluateLinkSafety({ url });
+  if (!safety.safe) {
+    console.warn('[research]', 'blocked-unsafe-action', { url, reason: safety.reason });
+    return { error: `Blocked unsafe action URL. ${safety.reason || ''}`.trim() };
+  }
   let tabId: number | undefined;
 
   try {
@@ -63,6 +70,7 @@ export async function fetchLinkContentInTab(
 
 async function waitForReadableContent(tabId: number, signal?: AbortSignal): Promise<TabContent> {
   const deadline = Date.now() + CONTENT_TIMEOUT_MS;
+  const minimumReadyAt = Date.now() + MIN_CONTENT_SETTLE_MS;
   let latest = await getTabContent(tabId);
   let previousFingerprint = '';
   let stableReads = 0;
@@ -70,7 +78,12 @@ async function waitForReadableContent(tabId: number, signal?: AbortSignal): Prom
   while (Date.now() < deadline) {
     const fingerprint = `${latest.url}\n${latest.title}\n${latest.text.trim()}`;
     stableReads = fingerprint === previousFingerprint ? stableReads + 1 : 0;
-    if (latest.text.trim().length >= 20 && stableReads >= STABLE_READS_REQUIRED) break;
+    if (
+      Date.now() >= minimumReadyAt &&
+      latest.text.trim().length >= 20 &&
+      stableReads >= STABLE_READS_REQUIRED
+    )
+      break;
     previousFingerprint = fingerprint;
     await delay(CONTENT_POLL_MS, signal);
     latest = await getTabContent(tabId);

@@ -211,6 +211,37 @@ describe('Analysis Pipeline', () => {
       consoleInfo.mockRestore();
     });
 
+    it('never visits unsafe action links even when asked to visit all links', async () => {
+      mockRouter.streamComplete.mockImplementation(async function* () {
+        yield { chunk: 'Answer', usedLocal: true };
+      });
+      global.fetch = jest.fn();
+      const unsafeContent: TabContent = {
+        ...mockContent,
+        links: [
+          {
+            url: 'https://stash.example.com/plugins/servlet/createBranch?issue=SQ-1',
+            text: 'Create branch',
+            isExternal: true,
+          },
+        ],
+      };
+
+      await analyzeWithReasoning(
+        mockRouter as any,
+        unsafeContent,
+        'Visit all links',
+        mockSettings,
+        mockCallbacks
+      );
+
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(fetchLinkContentInTab).not.toHaveBeenCalled();
+      expect(mockCallbacks.onLinkDecision).toHaveBeenCalledWith(
+        expect.objectContaining({ reason: 'blocked-unsafe-action', outcome: 'discarded' })
+      );
+    });
+
     it('logs links rejected by relevance scoring', async () => {
       const consoleInfo = jest.spyOn(console, 'info').mockImplementation(() => undefined);
       mockRouter.complete.mockResolvedValue({ text: '[0.1, 0.9]' });

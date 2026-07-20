@@ -15,6 +15,11 @@ export class LinkFetcher {
   private visited = new Set<string>();
 
   async fetch(url: string): Promise<FetchResult> {
+    const safety = evaluateLinkSafety({ url });
+    if (!safety.safe) {
+      console.warn('[research]', 'blocked-unsafe-action', { url, reason: safety.reason });
+      return { url, success: false, error: `Blocked unsafe action URL. ${safety.reason || ''}` };
+    }
     if (this.visited.has(url)) {
       return { url, success: false, error: 'Already visited' };
     }
@@ -124,3 +129,4 @@ function extractFromHtml(html: string, _baseUrl: string): { content: string; tit
     content: texts.join('\n\n').slice(0, 50000),
   };
 }
+import { evaluateLinkSafety } from '@/shared/link-safety';
