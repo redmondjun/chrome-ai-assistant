@@ -7,11 +7,17 @@ import { useActiveTab } from './hooks/useActiveTab';
 import { useChat } from './hooks/useChat';
 import { useSidepanelSettings } from './hooks/useSidepanelSettings';
 import './styles.css';
+import { evaluateLinkSafety } from '@/shared/link-safety';
 
 export default function App() {
   const activeTab = useActiveTab();
   const settings = useSidepanelSettings();
-  const chat = useChat(activeTab.content);
+  const chat = useChat(activeTab.content, {
+    localOnly: settings.localOnly,
+    cloudNoticeAccepted: settings.research.cloudNoticeAccepted,
+    cloudEndpoint: settings.model.customEndpoint || 'https://integrate.api.nvidia.com',
+    acceptCloudNotice: settings.acceptCloudNotice,
+  });
 
   const openSettings = () => chrome.runtime.openOptionsPage();
 
@@ -59,9 +65,27 @@ export default function App() {
         busy={chat.isLoading || !chat.isHistoryLoaded}
         generating={chat.isLoading}
         onStop={() => void chat.stop()}
+        deepResearch={chat.deepResearch}
+        onDeepResearchChange={chat.setDeepResearch}
+        researchSubjectCount={countResearchLinks(activeTab.content?.links || [])}
       />
     </main>
   );
+}
+
+function countResearchLinks(links: Array<{ url: string; text: string }>) {
+  const sources = new Set<string>();
+  links.forEach(link => {
+    if (!evaluateLinkSafety(link).safe) return;
+    try {
+      const url = new URL(link.url);
+      url.hash = '';
+      sources.add(url.href);
+    } catch {
+      // Ignore invalid extracted URLs.
+    }
+  });
+  return sources.size;
 }
 
 function LoadingScreen() {

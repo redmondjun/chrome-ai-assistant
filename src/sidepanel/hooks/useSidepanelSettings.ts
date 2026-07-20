@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTheme, type ThemePreference } from '@/shared/theme';
-import type { ModelSettings, StorageSettings } from '@/shared/types';
+import type { ModelSettings, ResearchSettings, StorageSettings } from '@/shared/types';
 
 const DEFAULT_MODEL: ModelSettings = {
   cloudModel: 'nemotron-3-nano',
@@ -10,10 +10,17 @@ const DEFAULT_MODEL: ModelSettings = {
   autoRoute: true,
   forceCloudFor: ['generate code', 'write document', 'create report'],
 };
+const DEFAULT_RESEARCH: ResearchSettings = {
+  workerConcurrency: 3,
+  maxRelatedSourcesPerTask: 5,
+  cloudNoticeAccepted: false,
+};
 
 export function useSidepanelSettings() {
   const [model, setModel] = useState(DEFAULT_MODEL);
   const [theme, setTheme] = useState<ThemePreference>('system');
+  const [research, setResearch] = useState(DEFAULT_RESEARCH);
+  const [localOnly, setLocalOnly] = useState(false);
   const [isLoaded, setIsLoaded] = useState(false);
   const [localModelReady, setLocalModelReady] = useState(false);
   useTheme(theme);
@@ -26,6 +33,8 @@ export function useSidepanelSettings() {
 
       setModel(nextModel);
       setTheme(saved?.ui?.theme || 'system');
+      setResearch({ ...DEFAULT_RESEARCH, ...saved?.research });
+      setLocalOnly(saved?.privacy?.localOnly || false);
       setLocalModelReady(await checkLocalModel());
       setIsLoaded(true);
     })();
@@ -43,7 +52,24 @@ export function useSidepanelSettings() {
     [model]
   );
 
-  return { model, isLoaded, localModelReady, updateModel };
+  const acceptCloudNotice = useCallback(async () => {
+    const nextResearch = { ...research, cloudNoticeAccepted: true };
+    setResearch(nextResearch);
+    await chrome.runtime.sendMessage({
+      type: 'UPDATE_SETTINGS',
+      settings: { research: nextResearch },
+    });
+  }, [research]);
+
+  return {
+    model,
+    research,
+    localOnly,
+    isLoaded,
+    localModelReady,
+    updateModel,
+    acceptCloudNotice,
+  };
 }
 
 function checkLocalModel(): Promise<boolean> {

@@ -5,7 +5,9 @@ jest.mock('marked', () => ({
     parse: (value: string) =>
       value === 'answer-link'
         ? '<p><a href="https://example.com/evidence">Open evidence</a></p>'
-        : `<p>${value}</p>`,
+        : value === 'unsafe-answer-link'
+          ? '<p><a href="https://stash.example.com/plugins/servlet/createBranch?issue=SQ-1">Create branch</a></p>'
+          : `<p>${value}</p>`,
   },
 }));
 import { AnswerDetails } from './AnswerDetails';
@@ -93,6 +95,27 @@ describe('side panel UI', () => {
     });
   });
 
+  it('blocks generated authenticated-action links', () => {
+    const alert = jest.spyOn(window, 'alert').mockImplementation(() => undefined);
+    jest.mocked(chrome.tabs.create).mockClear();
+    render(
+      <MessageItem
+        message={{
+          id: 'unsafe',
+          role: 'assistant',
+          content: 'unsafe-answer-link',
+          timestamp: Date.now(),
+        }}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('link', { name: 'Create branch' }));
+
+    expect(chrome.tabs.create).not.toHaveBeenCalled();
+    expect(alert).toHaveBeenCalledWith(expect.stringMatching(/blocked/i));
+    alert.mockRestore();
+  });
+
   it('shows the current source-research progress while streaming', () => {
     render(
       <MessageItem
@@ -138,6 +161,48 @@ describe('side panel UI', () => {
     expect(screen.getByRole('status')).toHaveTextContent('0s elapsed');
     expect(screen.getByText('Reasoning').closest('details')).toHaveAttribute('open');
     expect(screen.getByText('Sources visited').closest('details')).toHaveAttribute('open');
+  });
+
+  it('shows persistent Deep Research progress and expandable worker activity', async () => {
+    jest.mocked(chrome.runtime.sendMessage).mockResolvedValueOnce({ job: researchJobFixture() });
+    render(
+      <MessageItem
+        message={{
+          id: 'research-message',
+          role: 'assistant',
+          content: '',
+          timestamp: Date.now(),
+          isStreaming: true,
+          researchJobId: 'job-1',
+          researchProgress: {
+            jobId: 'job-1',
+            status: 'running',
+            activity: 'Researching architecture...',
+            totalTasks: 400,
+            completedTasks: 12,
+            failedTasks: 1,
+            activeWorkers: 3,
+            sourcesRead: 48,
+            sourcesFailed: 1,
+            updatedAt: Date.now(),
+            activeTaskIds: [],
+          },
+        }}
+      />
+    );
+
+    expect(screen.getByLabelText('Deep Research progress')).toHaveTextContent('12/400 subjects');
+    expect(screen.getByLabelText('Deep Research progress')).toHaveTextContent('3 workers active');
+    const worker = await screen.findByText('Architecture source');
+    expect(worker.closest('details')).not.toHaveAttribute('open');
+    fireEvent.click(worker.closest('summary')!);
+    expect(screen.getByText('Scoring related documentation')).toBeInTheDocument();
+    expect(screen.getByText(/waiting for AI scoring/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({
+      type: 'PAUSE_RESEARCH',
+      jobId: 'job-1',
+    });
   });
 
   it('closes reasoning after the answer is generated', () => {
@@ -220,3 +285,55 @@ describe('side panel UI', () => {
     expect(onRetry).toHaveBeenCalledTimes(1);
   });
 });
+
+function researchJobFixture() {
+  const now = Date.now();
+  return {
+    id: 'job-1',
+    messageId: 'research-message',
+    question: 'Research architecture',
+    status: 'running',
+    tasks: [
+      {
+        id: 'task-1',
+        label: 'Architecture source',
+        sourceUrl: 'https://example.com/architecture',
+        title: 'Architecture source',
+        status: 'running',
+        phase: 'scoring',
+        phaseStartedAt: now,
+        lastActivityAt: now,
+        reasoning: [
+          {
+            step: 1,
+            type: 'classify',
+            thought: 'Scoring related documentation',
+            timestamp: now,
+          },
+        ],
+        linkVisits: [],
+        relatedSourcesRead: 0,
+        relatedSourcesAttempted: 0,
+        evidence: [],
+        decisions: [],
+        pendingSources: [],
+        visitedUrls: [],
+      },
+    ],
+    progress: {
+      jobId: 'job-1',
+      status: 'running',
+      activity: 'Scoring links',
+      totalTasks: 1,
+      completedTasks: 0,
+      failedTasks: 0,
+      activeWorkers: 1,
+      sourcesRead: 0,
+      sourcesFailed: 0,
+      activeTaskIds: ['task-1'],
+      updatedAt: now,
+    },
+    createdAt: now,
+    updatedAt: now,
+  };
+}

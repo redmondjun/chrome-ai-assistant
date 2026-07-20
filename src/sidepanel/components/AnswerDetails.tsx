@@ -1,4 +1,5 @@
 import React from 'react';
+import { handleAnswerLinkClick } from './message-links';
 import type { LinkVisit, ReasoningStep } from '@/shared/types';
 
 interface AnswerDetailsProps {
@@ -15,7 +16,7 @@ export function AnswerDetails({
   if (reasoning.length === 0 && links.length === 0) return null;
 
   return (
-    <div className="answer-details">
+    <div className="answer-details" onClick={handleAnswerLinkClick}>
       {reasoning.length > 0 && (
         <details className="answer-detail" open={isStreaming}>
           <summary>

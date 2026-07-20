@@ -574,6 +574,98 @@ summary:focus-visible {
   background: var(--surface);
   border-top: 1px solid var(--border);
 }
+.deep-research-toggle {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 7px;
+  align-items: center;
+  margin: 0 2px 8px;
+  color: var(--text);
+  font-size: 11px;
+}
+.deep-research-toggle small {
+  grid-column: 2;
+  color: var(--muted);
+}
+.research-job {
+  margin: 0 0 8px;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  border-radius: 9px;
+  background: var(--accent-soft);
+  font-size: 11px;
+}
+.research-job-heading,
+.research-job-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.research-job-heading span {
+  color: var(--muted);
+  text-transform: capitalize;
+}
+.research-job progress {
+  width: 100%;
+  margin-top: 8px;
+  accent-color: var(--accent);
+}
+.research-job-actions {
+  justify-content: flex-start;
+  margin-top: 9px;
+}
+.research-job-actions button {
+  padding: 4px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+.research-workers {
+  margin-top: 9px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+.research-worker {
+  margin-top: 6px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  padding: 6px 8px;
+}
+.research-worker > summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: pointer;
+}
+.research-worker > summary > span:first-child {
+  display: grid;
+  min-width: 0;
+}
+.research-worker > summary strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.research-worker summary small,
+.research-worker > summary > span:last-child {
+  color: var(--muted);
+}
+.research-worker p,
+.research-worker pre,
+.research-worker ol,
+.research-worker ul,
+.research-worker details {
+  margin: 5px 0;
+}
+.research-worker pre {
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  font: inherit;
+}
 .composer-note {
   margin: 0 0 6px;
   color: var(--warning);
