@@ -8,6 +8,7 @@ on:
 
 jobs:
   address:
+    timeout-minutes: 20
     if: |
       github.event.sender.type == 'User' &&
       contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) &&

@@ -294,7 +294,12 @@ function runOpenCode(model, prompt) {
         '--file',
         promptFile,
       ],
-      { encoding: 'utf8', env: childEnv, maxBuffer: 20 * 1024 * 1024 }
+      {
+        encoding: 'utf8',
+        env: childEnv,
+        maxBuffer: 20 * 1024 * 1024,
+        timeout: 15 * 60 * 1000,
+      }
     );
     if (result.error) throw result.error;
     if (result.status !== 0) {
