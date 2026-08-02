@@ -112,7 +112,38 @@ export function extractAgentResponse(stdout, targetIds) {
     .replace(/^```json\s*/i, '')
     .replace(/\s*```$/, '');
   if (!text) throw new Error('OpenCode did not return a JSON response');
-  return validateAgentResponse(JSON.parse(text), targetIds);
+
+  const candidates = [];
+  let start = -1;
+  let depth = 0;
+  let quoted = false;
+  let escaped = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+    if (quoted) {
+      if (escaped) escaped = false;
+      else if (character === '\\') escaped = true;
+      else if (character === '"') quoted = false;
+      continue;
+    }
+    if (character === '"') quoted = true;
+    else if (character === '{') {
+      if (depth === 0) start = index;
+      depth += 1;
+    } else if (character === '}' && depth > 0) {
+      depth -= 1;
+      if (depth === 0) candidates.push(text.slice(start, index + 1));
+    }
+  }
+
+  for (const candidate of candidates.reverse()) {
+    try {
+      return validateAgentResponse(JSON.parse(candidate), targetIds);
+    } catch {
+      // Continue until a schema-valid object for the selected comments is found.
+    }
+  }
+  throw new Error('OpenCode did not return a valid structured response');
 }
 
 function run(command, args, options = {}) {

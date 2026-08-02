@@ -120,3 +120,14 @@ test('extracts the final JSON response from OpenCode JSON events', () => {
   ].join('\n');
   assert.equal(extractAgentResponse(stdout, [5]).results[0].decision, 'disagree');
 });
+
+test('extracts a validated JSON object when the model wraps it in prose', () => {
+  const response = {
+    results: [{ comment_id: 5, decision: 'clarify', reply: 'A decision is needed.' }],
+  };
+  const stdout = JSON.stringify({
+    type: 'text',
+    part: { text: `I've addressed the feedback.\n\`\`\`json\n${JSON.stringify(response)}\n\`\`\`` },
+  });
+  assert.equal(extractAgentResponse(stdout, [5]).results[0].decision, 'clarify');
+});
