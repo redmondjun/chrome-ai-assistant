@@ -58,16 +58,34 @@ export function ResearchJobPanel({ progress }: { progress: ResearchProgress }) {
       onClick={handleAnswerLinkClick}
     >
       <div className="research-job-heading">
-        <strong>{progress.activity}</strong>
+        <strong>{progressLabel(progress)}</strong>
         <span>{progress.status}</span>
       </div>
+      <p>{progress.activity}</p>
       <progress value={progress.completedTasks + progress.failedTasks} max={progress.totalTasks} />
       <div className="stream-progress-meta">
         <span>
           {progress.completedTasks}/{progress.totalTasks} subjects
         </span>
         <span>{progress.activeWorkers} workers active</span>
-        <span>{progress.sourcesRead} sources read</span>
+        <span>{progress.seedsScanned ?? 0} seeds scanned</span>
+        <span>{progress.subjectsExpanded ?? 0} subjects expanded</span>
+        <span>{progress.uniqueSourcesSucceeded ?? progress.sourcesRead} unique sources read</span>
+        {(progress.uniqueSourcesFailed ?? progress.sourcesFailed) > 0 && (
+          <span className="danger-text">
+            {progress.uniqueSourcesFailed ?? progress.sourcesFailed} source failures
+          </span>
+        )}
+        {(progress.sourceCacheHits ?? 0) > 0 && <span>{progress.sourceCacheHits} cache hits</span>}
+        {(progress.sourceRetries ?? 0) > 0 && <span>{progress.sourceRetries} retries</span>}
+        <span>
+          {progress.sourceBudgetUsed ?? 0}/{progress.sourceBudgetTotal ?? 0} source budget
+        </span>
+        {(progress.sourceBudgetOverflow ?? 0) > 0 && (
+          <span className="danger-text">
+            {progress.sourceBudgetOverflow} legacy sources above the current budget
+          </span>
+        )}
         {progress.failedTasks > 0 && (
           <span className="danger-text">{progress.failedTasks} failed</span>
         )}
@@ -122,7 +140,8 @@ function WorkerDetails({ task, now }: { task: ResearchTask; now: number }) {
           </small>
         </span>
         <span>
-          {task.evidence.length} read · {task.pendingSources.length} queued
+          {task.sourceKeys?.length ?? task.evidence.length} associated ·{' '}
+          {task.pendingSources.length} candidates
         </span>
       </summary>
       {idleSeconds >= 30 && task.status === 'running' && (
@@ -139,6 +158,9 @@ function WorkerDetails({ task, now }: { task: ResearchTask; now: number }) {
       )}
       <p>
         {task.relatedSourcesAttempted} related sources attempted · {task.relatedSourcesRead} read
+      </p>
+      <p>
+        Seed: {task.seedStatus || 'queued'} · Expansion: {task.expansionStatus || 'waiting'}
       </p>
       {task.error && <p className="danger-text">{task.error}</p>}
       <WorkerReasoning task={task} />
@@ -193,11 +215,37 @@ function WorkerSources({ task }: { task: ResearchTask }) {
 }
 
 function phaseLabel(task: ResearchTask) {
+  if (task.seedStatus === 'running') return 'scanning seed';
+  if (task.seedStatus === 'completed' && task.expansionStatus === 'waiting')
+    return 'waiting for expansion plan';
+  if (task.expansionStatus === 'running') return 'expanding evidence';
+  if (task.status === 'completed') return 'included in completed batch';
   if (task.phase === 'opening') return 'waiting for page';
   if (task.phase === 'scoring') return 'waiting for AI scoring';
   if (task.phase === 'analyzing') return 'waiting for AI analysis';
   if (task.phase === 'reading') return 'reading page';
   return task.phase;
+}
+
+function progressLabel(progress: ResearchProgress) {
+  const stage = progress.stage ? stageLabel(progress.stage) : progress.activity;
+  if (
+    progress.currentBatch &&
+    progress.totalBatches &&
+    ['seed-scan', 'expansion', 'batch-synthesis'].includes(progress.stage || '')
+  ) {
+    return `${stage} · batch ${progress.currentBatch} of ${progress.totalBatches}`;
+  }
+  return stage || progress.activity;
+}
+
+function stageLabel(stage: NonNullable<ResearchProgress['stage']>) {
+  if (stage === 'seed-scan') return 'Seed scan';
+  if (stage === 'expansion-planning') return 'Planning expansion';
+  if (stage === 'expansion') return 'Selective expansion';
+  if (stage === 'batch-synthesis') return 'Batch synthesis';
+  if (stage === 'final-synthesis') return 'Final synthesis';
+  return 'Research complete';
 }
 
 function formatDuration(totalSeconds: number) {

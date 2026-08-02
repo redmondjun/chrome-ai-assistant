@@ -13,6 +13,8 @@ const DEFAULT_MODEL: ModelSettings = {
 const DEFAULT_RESEARCH: ResearchSettings = {
   workerConcurrency: 3,
   maxRelatedSourcesPerTask: 5,
+  subjectBatchSize: 25,
+  maxUniqueSourcesPerJob: 1000,
   cloudNoticeAccepted: false,
 };
 

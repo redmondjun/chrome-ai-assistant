@@ -20,6 +20,8 @@ export interface ExtensionSettings {
   research: {
     workerConcurrency: number;
     maxRelatedSourcesPerTask: number;
+    subjectBatchSize: number;
+    maxUniqueSourcesPerJob: number;
     cloudNoticeAccepted: boolean;
   };
   ui: {
@@ -62,6 +64,8 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
   research: {
     workerConcurrency: 3,
     maxRelatedSourcesPerTask: 5,
+    subjectBatchSize: 25,
+    maxUniqueSourcesPerJob: 1000,
     cloudNoticeAccepted: false,
   },
   ui: {

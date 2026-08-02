@@ -86,7 +86,9 @@ export class ResearchCoordinator {
       router = await this.getRouter();
       settings = await this.getSettings();
     } catch (error) {
-      this.activeJobs.delete(jobId);
+      if (this.activeJobs.get(jobId) === controller) {
+        this.activeJobs.delete(jobId);
+      }
       throw error;
     }
     chrome.alarms.create(RESEARCH_RESUME_ALARM, { periodInMinutes: 1 });
@@ -123,8 +125,10 @@ export class ResearchCoordinator {
         });
       })
       .finally(async () => {
-        this.activeJobs.delete(jobId);
-        if ((await getResumableResearchJobs()).length === 0) {
+        if (this.activeJobs.get(jobId) === controller) {
+          this.activeJobs.delete(jobId);
+        }
+        if (this.activeJobs.size === 0 && (await getResumableResearchJobs()).length === 0) {
           await chrome.alarms.clear(RESEARCH_RESUME_ALARM);
         }
       });

@@ -26,9 +26,20 @@ export interface LinkVisit {
   snippet?: string;
   timestamp: number;
   error?: string;
+  failureReason?: SourceFailureReason;
   method?: 'direct-fetch' | 'browser-tab';
   depth?: number;
 }
+
+export type RetrievedPageRejectionReason =
+  | 'authentication-required'
+  | 'access-denied'
+  | 'http-error'
+  | 'not-found'
+  | 'empty-application-shell';
+
+export type SourceFailureReason =
+  RetrievedPageRejectionReason | 'retrieval-failed' | 'source-budget-exhausted';
 
 export interface LinkDecision {
   url: string;
@@ -71,8 +82,18 @@ export interface LinkFollowSettings {
 export interface ResearchSettings {
   workerConcurrency: number;
   maxRelatedSourcesPerTask: number;
+  subjectBatchSize: number;
+  maxUniqueSourcesPerJob: number;
   cloudNoticeAccepted: boolean;
 }
+
+export type ResearchStage =
+  | 'seed-scan'
+  | 'expansion-planning'
+  | 'expansion'
+  | 'batch-synthesis'
+  | 'final-synthesis'
+  | 'completed';
 
 export type ResearchJobStatus =
   'queued' | 'running' | 'paused' | 'completed' | 'cancelled' | 'failed';
@@ -87,6 +108,45 @@ export interface ResearchEvidence {
   category: 'ticket' | 'epic' | 'business' | 'documentation' | 'code-review' | 'other';
   excerpt: string;
   depth: number;
+}
+
+export interface ResearchSeedAssessment {
+  summary: string;
+  relevance: number;
+  themes: string[];
+  evidenceGaps: string[];
+  expansionNeeded: boolean;
+}
+
+export interface ResearchSourceRecord {
+  key: string;
+  url: string;
+  title: string;
+  status: 'pending' | 'fetching' | 'success' | 'failed';
+  taskIds: string[];
+  evidence?: ResearchEvidence;
+  error?: string;
+  failureReason?: SourceFailureReason;
+  retries: number;
+  cacheHits: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ResearchExpansionItem {
+  taskId: string;
+  source: { url: string; title: string; depth: number; score: number };
+  priority: number;
+  status: 'planned' | 'completed' | 'skipped' | 'failed';
+  reason?: string;
+}
+
+export interface ResearchBatchSummary {
+  batchIndex: number;
+  kind: 'discovery' | 'final';
+  taskIds: string[];
+  summary: string;
+  createdAt: number;
 }
 
 export interface ResearchSourceDecision {
@@ -113,6 +173,11 @@ export interface ResearchTask {
   linkVisits: LinkVisit[];
   relatedSourcesRead: number;
   relatedSourcesAttempted: number;
+  batchIndex?: number;
+  seedStatus?: 'queued' | 'running' | 'completed' | 'failed';
+  expansionStatus?: 'waiting' | 'planned' | 'running' | 'completed' | 'skipped';
+  seedAssessment?: ResearchSeedAssessment;
+  sourceKeys?: string[];
   evidence: ResearchEvidence[];
   decisions: ResearchSourceDecision[];
   pendingSources: Array<{ url: string; title: string; depth: number; score?: number }>;
@@ -133,6 +198,19 @@ export interface ResearchProgress {
   sourcesFailed: number;
   updatedAt: number;
   activeTaskIds: string[];
+  stage?: ResearchStage;
+  currentBatch?: number;
+  totalBatches?: number;
+  seedsScanned?: number;
+  subjectsExpanded?: number;
+  uniqueSourcesOpened?: number;
+  uniqueSourcesSucceeded?: number;
+  uniqueSourcesFailed?: number;
+  sourceCacheHits?: number;
+  sourceRetries?: number;
+  sourceBudgetUsed?: number;
+  sourceBudgetTotal?: number;
+  sourceBudgetOverflow?: number;
 }
 
 export interface ResearchJob {
@@ -142,10 +220,33 @@ export interface ResearchJob {
   status: ResearchJobStatus;
   tasks: ResearchTask[];
   progress: ResearchProgress;
+  stage?: ResearchStage;
+  currentBatch?: number;
+  totalBatches?: number;
+  batchSummaries?: ResearchBatchSummary[];
+  expansionPlan?: ResearchExpansionItem[];
+  sourceRegistry?: ResearchSourceRecord[];
+  sourceBudget?: number;
+  sourceBudgetOverflow?: number;
+  synthesisState?: { level: number; summaries: string[] };
+  partialAnswer?: string;
   finalAnswer?: string;
   error?: string;
   createdAt: number;
   updatedAt: number;
+}
+
+export interface ResearchConversationContext {
+  jobId: string;
+  originalQuestion: string;
+  status: ResearchJobStatus;
+  completedSubjects: number;
+  totalSubjects: number;
+  successfulSources: number;
+  failedSources: number;
+  summary: string;
+  partial: boolean;
+  error?: string;
 }
 
 export interface StorageSettings {

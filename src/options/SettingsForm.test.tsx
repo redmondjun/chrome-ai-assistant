@@ -21,7 +21,13 @@ const storedSettings = {
     allowedDomains: '',
     blockedDomains: 'example.org',
   },
-  research: { workerConcurrency: 3, maxRelatedSourcesPerTask: 5, cloudNoticeAccepted: false },
+  research: {
+    workerConcurrency: 3,
+    maxRelatedSourcesPerTask: 5,
+    subjectBatchSize: 25,
+    maxUniqueSourcesPerJob: 1000,
+    cloudNoticeAccepted: false,
+  },
   ui: {
     theme: 'dark',
     showReasoning: false,
@@ -101,8 +107,12 @@ describe('SettingsForm', () => {
 
     const workers = await screen.findByLabelText('Concurrent research workers');
     const relatedSources = await screen.findByLabelText('Related sources per subject');
+    const batchSize = await screen.findByLabelText('Subjects per research batch');
+    const sourceBudget = await screen.findByLabelText('Unique sources per research job');
     fireEvent.change(workers, { target: { value: '5' } });
     fireEvent.change(relatedSources, { target: { value: '4' } });
+    fireEvent.change(batchSize, { target: { value: '30' } });
+    fireEvent.change(sourceBudget, { target: { value: '800' } });
     fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
 
     await waitFor(() =>
@@ -111,6 +121,8 @@ describe('SettingsForm', () => {
           research: expect.objectContaining({
             workerConcurrency: 5,
             maxRelatedSourcesPerTask: 4,
+            subjectBatchSize: 30,
+            maxUniqueSourcesPerJob: 800,
           }),
         }),
       })

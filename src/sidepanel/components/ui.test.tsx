@@ -186,6 +186,18 @@ describe('side panel UI', () => {
             sourcesFailed: 1,
             updatedAt: Date.now(),
             activeTaskIds: [],
+            stage: 'seed-scan',
+            currentBatch: 3,
+            totalBatches: 17,
+            seedsScanned: 62,
+            subjectsExpanded: 0,
+            uniqueSourcesSucceeded: 61,
+            uniqueSourcesFailed: 1,
+            sourceCacheHits: 4,
+            sourceRetries: 1,
+            sourceBudgetUsed: 63,
+            sourceBudgetTotal: 1000,
+            sourceBudgetOverflow: 391,
           },
         }}
       />
@@ -193,6 +205,18 @@ describe('side panel UI', () => {
 
     expect(screen.getByLabelText('Deep Research progress')).toHaveTextContent('12/400 subjects');
     expect(screen.getByLabelText('Deep Research progress')).toHaveTextContent('3 workers active');
+    expect(screen.getByLabelText('Deep Research progress')).toHaveTextContent(
+      'Seed scan · batch 3 of 17'
+    );
+    expect(screen.getByLabelText('Deep Research progress')).toHaveTextContent(
+      '61 unique sources read'
+    );
+    expect(screen.getByLabelText('Deep Research progress')).toHaveTextContent(
+      '63/1000 source budget'
+    );
+    expect(screen.getByLabelText('Deep Research progress')).toHaveTextContent(
+      '391 legacy sources above the current budget'
+    );
     const worker = await screen.findByText('Architecture source');
     expect(worker.closest('details')).not.toHaveAttribute('open');
     fireEvent.click(worker.closest('summary')!);

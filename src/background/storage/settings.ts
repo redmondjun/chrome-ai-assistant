@@ -32,6 +32,8 @@ export const DEFAULT_SETTINGS: StorageSettings = {
   research: {
     workerConcurrency: 3,
     maxRelatedSourcesPerTask: 5,
+    subjectBatchSize: 25,
+    maxUniqueSourcesPerJob: 1000,
     cloudNoticeAccepted: false,
   },
   ui: {

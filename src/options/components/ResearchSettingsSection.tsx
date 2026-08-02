@@ -45,6 +45,41 @@ export function ResearchSettingsSection({ settings, onChange }: Props) {
           className={CONTROL_CLASS}
         />
       </Field>
+      <Field id="research-subject-batch-size" label="Subjects per research batch">
+        <input
+          id="research-subject-batch-size"
+          type="number"
+          min={1}
+          max={100}
+          value={settings.subjectBatchSize}
+          onChange={event =>
+            onChange({
+              ...settings,
+              subjectBatchSize: Math.min(100, Math.max(1, Number(event.target.value) || 25)),
+            })
+          }
+          className={CONTROL_CLASS}
+        />
+      </Field>
+      <Field id="research-source-budget" label="Unique sources per research job">
+        <input
+          id="research-source-budget"
+          type="number"
+          min={1}
+          max={10000}
+          value={settings.maxUniqueSourcesPerJob}
+          onChange={event =>
+            onChange({
+              ...settings,
+              maxUniqueSourcesPerJob: Math.min(
+                10000,
+                Math.max(1, Number(event.target.value) || 1000)
+              ),
+            })
+          }
+          className={CONTROL_CLASS}
+        />
+      </Field>
       <p className="text-sm text-gray-600 dark:text-gray-400">
         Three workers is the recommended balance for authenticated and public sources.
       </p>
