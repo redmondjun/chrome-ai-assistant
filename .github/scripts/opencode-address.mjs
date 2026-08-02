@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const TRUSTED_ASSOCIATIONS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
@@ -276,13 +276,36 @@ function runOpenCode(model, prompt) {
   delete childEnv.GH_TOKEN;
   delete childEnv.ACTIONS_ID_TOKEN_REQUEST_TOKEN;
   delete childEnv.ACTIONS_ID_TOKEN_REQUEST_URL;
-  const result = spawnSync(
-    'opencode',
-    ['run', '--auto', '--format', 'json', '--agent', 'pr-comment-fixer', '--model', model, prompt],
-    { encoding: 'utf8', env: childEnv, maxBuffer: 20 * 1024 * 1024 }
-  );
-  if (result.status !== 0) throw new Error(`OpenCode failed: ${result.stderr || result.stdout}`);
-  return result.stdout;
+  const promptFile = '.opencode-address-prompt.md';
+  writeFileSync(promptFile, prompt, { mode: 0o600 });
+  try {
+    const result = spawnSync(
+      'opencode',
+      [
+        'run',
+        '--auto',
+        '--format',
+        'json',
+        '--agent',
+        'pr-comment-fixer',
+        '--model',
+        model,
+        '--file',
+        promptFile,
+        'Address the review feedback using the attached context.',
+      ],
+      { encoding: 'utf8', env: childEnv, maxBuffer: 20 * 1024 * 1024 }
+    );
+    if (result.error) throw result.error;
+    if (result.status !== 0) {
+      throw new Error(
+        `OpenCode failed: ${result.stderr || result.stdout || `exit ${result.status}`}`
+      );
+    }
+    return result.stdout;
+  } finally {
+    unlinkSync(promptFile);
+  }
 }
 
 async function findChildPr(token, owner, repo, pr) {
