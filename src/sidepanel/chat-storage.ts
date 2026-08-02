@@ -68,7 +68,7 @@ async function hydrateResearchMessage(message: ChatMessage): Promise<ChatMessage
     if (!job) return message;
     return {
       ...message,
-      content: job.finalAnswer || message.content,
+      content: job.finalAnswer || job.partialAnswer || message.content,
       researchProgress: job.progress,
       isStreaming: ['queued', 'running'].includes(job.status),
     };

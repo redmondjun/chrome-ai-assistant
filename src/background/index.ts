@@ -3,7 +3,8 @@ import { ModelRouter, createRouter } from './api/router';
 import { analyzeWithReasoning, AnalysisCallbacks } from './pipeline/analyze';
 import { getTabContent } from './content/tab-content';
 import { ResearchCoordinator, RESEARCH_RESUME_ALARM } from './research/coordinator';
-import type { BackgroundMessage, TabContent, StorageSettings } from '@/shared/types';
+import { buildResearchConversationContext } from './research/context';
+import type { BackgroundMessage, ChatMessage, TabContent, StorageSettings } from '@/shared/types';
 
 let router: ModelRouter | null = null;
 let routerInitialization: Promise<ModelRouter> | null = null;
@@ -81,6 +82,7 @@ chrome.runtime.onMessage.addListener((message: BackgroundMessage, sender, sendRe
           }
 
           const settings = await getSettings();
+          const researchContext = await getConversationResearchContext(message.history);
           const messageId = message.messageId;
           if (!messageId) throw new Error('No message ID');
           const controller = new AbortController();
@@ -133,7 +135,8 @@ chrome.runtime.onMessage.addListener((message: BackgroundMessage, sender, sendRe
             settings,
             callbacks,
             message.history,
-            controller.signal
+            controller.signal,
+            researchContext
           )
             .catch(err => {
               if (controller.signal.aborted) {
@@ -253,6 +256,13 @@ async function saveSettings(settings: Partial<StorageSettings>): Promise<void> {
   const current = await getSettings();
   const merged = deepMerge(current, settings);
   await chrome.storage.sync.set({ 'chrome-ai-settings': merged });
+}
+
+async function getConversationResearchContext(history: ChatMessage[] = []) {
+  const jobId = [...history].reverse().find(message => message.researchJobId)?.researchJobId;
+  if (!jobId) return undefined;
+  const job = await researchCoordinator.getJob(jobId);
+  return job ? buildResearchConversationContext(job) : undefined;
 }
 
 function deepMerge(target: any, source: any): any {

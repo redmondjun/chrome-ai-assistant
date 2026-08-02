@@ -1,6 +1,7 @@
 import { ModelRouter } from '../api/router';
 import { shouldFollowLinks as modelShouldFollowLinks } from '../content/classifier';
 import { fetchLinkContentInTab } from '../content/link-tab-fetcher';
+import { validateRetrievedPage } from '../content/retrieved-page';
 import { evaluateLinkSafety } from '@/shared/link-safety';
 import type {
   TabContent,
@@ -11,6 +12,7 @@ import type {
   ChatMessage,
   LinkInfo,
   LinkDecision,
+  ResearchConversationContext,
 } from '@/shared/types';
 
 const LINK_SCORING_BATCH_SIZE = 10;
@@ -36,7 +38,8 @@ export async function analyzeWithReasoning(
   },
   callbacks: AnalysisCallbacks,
   history: ChatMessage[] = [],
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  researchContext?: ResearchConversationContext
 ): Promise<void> {
   const startedAt = Date.now();
   const logStage = (stage: string, details: object = {}) =>
@@ -64,7 +67,9 @@ export async function analyzeWithReasoning(
       thought: 'Reporting recorded link-visit results from this conversation.',
       timestamp: Date.now(),
     });
-    callbacks.onChunk(buildLinkVisitStatus(history));
+    callbacks.onChunk(
+      researchContext ? buildResearchVisitStatus(researchContext) : buildLinkVisitStatus(history)
+    );
     callbacks.onDone?.();
     return;
   }
@@ -177,6 +182,7 @@ export async function analyzeWithReasoning(
       try {
         let fetched = await fetchLinkContent(link.url, signal);
         let failure = '';
+        let failureReason: LinkVisit['failureReason'];
         let method: LinkVisit['method'] = 'direct-fetch';
         let discoveredLinks: LinkInfo[] = [];
         let fetchedTitle = link.text;
@@ -190,20 +196,26 @@ export async function analyzeWithReasoning(
           const tabResult = await fetchLinkContentInTab(link.url, signal);
           fetched = tabResult.content || null;
           failure = tabResult.error || '';
+          failureReason = tabResult.failureReason;
           discoveredLinks = tabResult.links || [];
           fetchedTitle = tabResult.title || fetchedTitle;
           method = 'browser-tab';
         }
         if (fetched) {
-          const invalidReason = getInvalidPageReason(fetched, fetchedTitle);
-          if (invalidReason) {
+          const validation = validateRetrievedPage({
+            content: fetched,
+            title: fetchedTitle,
+            url: link.url,
+          });
+          if (!validation.valid) {
             const visit: LinkVisit = {
               url: link.url,
               title: link.text,
               relevanceScore: score,
               status: 'failed',
               timestamp: Date.now(),
-              error: invalidReason,
+              error: validation.message,
+              failureReason: validation.reason,
               method,
               depth,
             };
@@ -212,7 +224,7 @@ export async function analyzeWithReasoning(
             callbacks.onReasoning?.({
               step: 2,
               type: 'extract',
-              thought: `Could not use ${link.text || link.url}: ${invalidReason}`,
+              thought: `Could not use ${link.text || link.url}: ${validation.message}`,
               timestamp: Date.now(),
             });
             emitLinkDecision(callbacks, link, depth, 'discarded', 'invalid-page-content', score);
@@ -324,6 +336,7 @@ export async function analyzeWithReasoning(
             error:
               failure ||
               'No readable content returned. Sign in to the source and connect to the company network.',
+            failureReason: failureReason || 'retrieval-failed',
           };
           currentVisits.push(visit);
           callbacks.onLinkVisit?.(visit);
@@ -384,22 +397,34 @@ export async function analyzeWithReasoning(
     callbacks.onReasoning?.({
       step: 2,
       type: 'synthesize',
-      thought: 'This question does not require following links. Using the current page.',
+      thought: researchContext
+        ? 'This question does not require new link retrieval. Using the current page and persisted Deep Research findings.'
+        : 'This question does not require following links. Using the current page.',
       timestamp: Date.now(),
     });
   }
 
   // Generate final answer
-  const prompt = buildPrompt(context, question, content.url, content.title, history, currentVisits);
+  const prompt = buildPrompt(
+    context,
+    question,
+    content.url,
+    content.title,
+    history,
+    currentVisits,
+    researchContext
+  );
   signal?.throwIfAborted();
   logStage('generation-started', { retrievedPages: currentVisits.length });
 
   for await (const result of router.streamComplete(
     question,
     {
-      hasLinks: shouldFollow,
+      hasLinks: shouldFollow || Boolean(researchContext),
       contentLength:
-        context.length + history.reduce((length, message) => length + message.content.length, 0),
+        context.length +
+        history.reduce((length, message) => length + message.content.length, 0) +
+        (researchContext?.summary.length || 0),
     },
     prompt,
     { temperature: 0.7, maxTokens: 4096, signal }
@@ -587,18 +612,6 @@ function scoreLinksByKeywords(links: TabContent['links'], question: string): num
   });
 }
 
-function getInvalidPageReason(content: string, title: string): string | undefined {
-  const sample = `${title}\n${content.slice(0, 2000)}`;
-  if (/\bHTTP Status 4\d\d\b/i.test(sample)) return 'The source returned an HTTP error page.';
-  if (/\b(?:Page Not Found|The page doesn['’]t exist|We can['’]t find that page)\b/i.test(sample)) {
-    return 'The source returned a page-not-found response.';
-  }
-  if (/\b(?:Access Denied|You do not have permission to view this page)\b/i.test(sample)) {
-    return 'The source returned an access-denied page.';
-  }
-  return undefined;
-}
-
 function isRelevantChildLink(
   link: LinkInfo,
   score: number,
@@ -778,7 +791,8 @@ function buildPrompt(
   url: string,
   title: string,
   history: ChatMessage[],
-  currentVisits: LinkVisit[]
+  currentVisits: LinkVisit[],
+  researchContext?: ResearchConversationContext
 ): string {
   const conversation = history
     .filter(message => !message.isStreaming && message.content)
@@ -791,15 +805,40 @@ function buildPrompt(
   const sourceStatus = formatSourceStatus(
     currentVisits.length > 0 ? currentVisits : getLatestVisits(history)
   );
+  const persistedResearch = researchContext
+    ? `Persisted Deep Research results:
+${formatResearchContext(researchContext)}
+
+`
+    : '';
 
   return `Source: ${title} (${url})
 
 Content:
 ${context.slice(0, 50000)}
 
-${sourceStatus ? `Source retrieval results:\n${sourceStatus}\n\n` : ''}${conversation ? `Conversation so far:\n${conversation}\n\n` : ''}Current question: ${question}
+${sourceStatus ? `Source retrieval results:\n${sourceStatus}\n\n` : ''}${persistedResearch}${conversation ? `Conversation so far:\n${conversation}\n\n` : ''}Current question: ${question}
 
-Answer the current question directly. The current question has priority over previous requests and answers. Do not repeat or regenerate a previous summary unless the current question explicitly requests it. Use the source retrieval results as the truth about which links were visited. Cite successfully retrieved sources when possible.`;
+Answer the current question directly. The current question has priority over previous requests and answers. Do not repeat or regenerate a previous summary unless the current question explicitly requests it. Do not recommend exporting to Word, PDF, or another format unless the current question explicitly requests an export. Use the source retrieval and persisted research results as the truth about which links were visited. A failed research job may still contain valid partial findings; do not claim that nothing was read when its successful-source count is greater than zero. Cite successfully retrieved sources when possible.`;
+}
+
+function formatResearchContext(context: ResearchConversationContext): string {
+  return `Research job: ${context.jobId}
+Status: ${context.status}${context.partial ? ' (partial findings available)' : ''}
+Original request: ${context.originalQuestion}
+Completed subjects: ${context.completedSubjects}/${context.totalSubjects}
+Validated readable sources: ${context.successfulSources}
+Failed or inaccessible sources: ${context.failedSources}
+${context.error ? `Research error: ${context.error}\n` : ''}Compact findings:
+${context.summary}`;
+}
+
+function buildResearchVisitStatus(context: ResearchConversationContext): string {
+  const completion =
+    context.failedSources === 0
+      ? `All ${context.successfulSources} recorded research sources were retrieved successfully.`
+      : `${context.successfulSources} research sources were retrieved successfully and ${context.failedSources} failed or were inaccessible.`;
+  return `${completion} The research job is ${context.status}${context.partial ? ' and has partial findings available' : ''}.`;
 }
 
 function explicitlyRequestsLinkRetrieval(question: string): boolean {

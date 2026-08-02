@@ -34,7 +34,13 @@ const savedSettings: StorageSettings = {
     allowedDomains: [],
     blockedDomains: [],
   },
-  research: { workerConcurrency: 3, maxRelatedSourcesPerTask: 5, cloudNoticeAccepted: false },
+  research: {
+    workerConcurrency: 3,
+    maxRelatedSourcesPerTask: 5,
+    subjectBatchSize: 25,
+    maxUniqueSourcesPerJob: 1000,
+    cloudNoticeAccepted: false,
+  },
   ui: {
     theme: 'light',
     showReasoning: true,

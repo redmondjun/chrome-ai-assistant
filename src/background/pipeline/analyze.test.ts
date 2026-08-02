@@ -347,6 +347,76 @@ describe('Analysis Pipeline', () => {
       expect(mockRouter.streamComplete).not.toHaveBeenCalled();
     });
 
+    it('uses compact persisted Deep Research findings in a later chat question', async () => {
+      mockRouter.streamComplete.mockImplementation(async function* () {
+        yield { chunk: 'STAR answer from persisted research', usedLocal: false };
+      });
+
+      await analyzeWithReasoning(
+        mockRouter as any,
+        mockContent,
+        'Use everything you already read to generate STAR stories',
+        { ...mockSettings, links: { ...mockSettings.links, enabled: false } },
+        mockCallbacks,
+        [],
+        undefined,
+        {
+          jobId: 'research-job',
+          originalQuestion: 'Research all tickets',
+          status: 'failed',
+          completedSubjects: 48,
+          totalSubjects: 418,
+          successfulSources: 1177,
+          failedSources: 213,
+          summary: 'Compact validated findings with source URLs',
+          partial: true,
+          error: '370 research subjects failed',
+        }
+      );
+
+      const prompt = mockRouter.streamComplete.mock.calls[0][2];
+      expect(prompt).toContain('Persisted Deep Research results');
+      expect(prompt).toContain('Validated readable sources: 1177');
+      expect(prompt).toContain('Failed or inaccessible sources: 213');
+      expect(prompt).toContain('Compact validated findings with source URLs');
+      expect(prompt).toContain(
+        'do not claim that nothing was read when its successful-source count is greater than zero'
+      );
+      expect(mockCallbacks.onReasoning).toHaveBeenCalledWith(
+        expect.objectContaining({
+          thought: expect.stringContaining('persisted Deep Research findings'),
+        })
+      );
+    });
+
+    it('reports persisted Deep Research source outcomes directly', async () => {
+      await analyzeWithReasoning(
+        mockRouter as any,
+        mockContent,
+        'Did you visit all the sources?',
+        mockSettings,
+        mockCallbacks,
+        [],
+        undefined,
+        {
+          jobId: 'research-job',
+          originalQuestion: 'Research all tickets',
+          status: 'failed',
+          completedSubjects: 48,
+          totalSubjects: 418,
+          successfulSources: 1177,
+          failedSources: 213,
+          summary: 'Partial findings',
+          partial: true,
+        }
+      );
+
+      expect(mockCallbacks.onChunk).toHaveBeenCalledWith(
+        '1177 research sources were retrieved successfully and 213 failed or were inaccessible. The research job is failed and has partial findings available.'
+      );
+      expect(mockRouter.streamComplete).not.toHaveBeenCalled();
+    });
+
     it('follows relevant child links up to the configured depth', async () => {
       mockRouter.complete.mockResolvedValue({ text: '[0.9]' });
       mockRouter.streamComplete.mockImplementation(async function* () {

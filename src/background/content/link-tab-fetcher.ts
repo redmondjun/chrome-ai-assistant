@@ -1,6 +1,7 @@
 import { getTabContent } from './tab-content';
+import { validateRetrievedPage } from './retrieved-page';
 import { evaluateLinkSafety } from '@/shared/link-safety';
-import type { LinkInfo, TabContent } from '@/shared/types';
+import type { LinkInfo, RetrievedPageRejectionReason, TabContent } from '@/shared/types';
 
 const LOAD_TIMEOUT_MS = 20000;
 const CONTENT_TIMEOUT_MS = 10000;
@@ -14,6 +15,7 @@ export interface LinkTabFetchResult {
   finalUrl?: string;
   title?: string;
   error?: string;
+  failureReason?: RetrievedPageRejectionReason;
 }
 
 export async function fetchLinkContentInTab(
@@ -37,12 +39,24 @@ export async function fetchLinkContentInTab(
     if (isAuthenticationPage(url, content.url, content.title)) {
       return {
         error: `The source redirected to an authentication page: ${content.title} (${content.url})`,
+        failureReason: 'authentication-required',
       };
     }
     const text = content.text.trim();
     if (!text) {
       return {
         error: `The authenticated tab loaded ${content.title} (${content.url}) but no readable text appeared within ${CONTENT_TIMEOUT_MS / 1000} seconds.`,
+      };
+    }
+    const validation = validateRetrievedPage({
+      content: text,
+      title: content.title,
+      url: content.url,
+    });
+    if (!validation.valid) {
+      return {
+        error: validation.message,
+        failureReason: validation.reason,
       };
     }
 
