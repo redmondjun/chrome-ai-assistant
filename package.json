@@ -14,11 +14,12 @@
     "lint": "eslint src --ext ts,tsx",
     "typecheck": "tsc --noEmit",
     "test": "jest",
+    "test:automation": "node --test .github/scripts/*.test.mjs",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
     "format": "prettier --write \"src/**/*.{ts,tsx,json,css,md}\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx,json,css,md}\"",
-    "verify": "npm run format:check && npm run lint -- --max-warnings=0 && npm run typecheck && npm test -- --runInBand && npm run build"
+    "verify": "npm run format:check && npm run lint -- --max-warnings=0 && npm run typecheck && npm test -- --runInBand && npm run test:automation && npm run build"
   },
   "dependencies": {
     "@wllama/wllama": "^3.5.1",

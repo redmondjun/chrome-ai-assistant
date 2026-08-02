@@ -40,5 +40,8 @@ jobs:
       - name: Run unit tests
         run: npm test -- --runInBand
 
+      - name: Test GitHub automation
+        run: npm run test:automation
+
       - name: Build extension
         run: npm run build
