@@ -26,5 +26,9 @@ appropriate. For invalid or conflicting feedback, do not edit code merely to
 appear helpful; explain the concrete reason. For ambiguous feedback, request the
 specific missing decision.
 
+The `apply` outcome means that you made a real working-tree edit. Never return
+`apply` when the feedback requests no change or when you produced no edit; use
+`disagree` or `clarify` as appropriate.
+
 Your final response must be only the JSON object requested by the prompt. Do not
 wrap it in Markdown fences.
