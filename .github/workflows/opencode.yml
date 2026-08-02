@@ -13,6 +13,8 @@ jobs:
       contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) &&
       !startsWith(github.event.comment.body, '/oc address') &&
       !startsWith(github.event.comment.body, '/opencode address') &&
+      !startsWith(github.event.comment.body, '/oc review') &&
+      !startsWith(github.event.comment.body, '/opencode review') &&
       (contains(github.event.comment.body, ' /oc') ||
        startsWith(github.event.comment.body, '/oc') ||
        contains(github.event.comment.body, ' /opencode') ||
@@ -35,3 +37,37 @@ jobs:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
         with:
           model: nvidia/nvidia/nemotron-3-super-120b-a12b
+
+  review:
+    timeout-minutes: 20
+    if: |
+      github.event.sender.type == 'User' &&
+      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) &&
+      (startsWith(github.event.comment.body, '/oc review') ||
+       startsWith(github.event.comment.body, '/opencode review'))
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: write
+      issues: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.17.0
+          cache: npm
+
+      - name: Install pinned OpenCode CLI
+        run: npm install --global opencode-ai@1.18.11
+
+      - name: Review pull request inline
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: node .github/scripts/opencode-review.mjs
