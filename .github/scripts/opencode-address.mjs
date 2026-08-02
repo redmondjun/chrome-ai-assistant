@@ -301,7 +301,7 @@ Return only valid JSON in this exact shape:
 Include exactly one result for each target root comment ID: ${targets.map(target => target.id).join(', ')}.`;
 }
 
-function runOpenCode(model, prompt) {
+function runOpenCode(model, prompt, targetIds) {
   const childEnv = { ...process.env };
   delete childEnv.GITHUB_TOKEN;
   delete childEnv.GH_TOKEN;
@@ -314,7 +314,7 @@ function runOpenCode(model, prompt) {
       'opencode',
       [
         'run',
-        'Address the review feedback using the attached context.',
+        `Address the review feedback using the attached context. Return ONLY JSON with exactly these comment IDs: ${targetIds.join(', ')}. Required shape: {"results":[{"comment_id":123,"decision":"apply|disagree|clarify","reply":"concise explanation"}],"commit_summary":"short imperative summary"}`,
         '--auto',
         '--format',
         'json',
@@ -411,7 +411,7 @@ async function main() {
     throw new Error('Address commands are supported only on pull requests');
   }
 
-  const token = await getAppToken();
+  let token = await getAppToken();
   failureContext = { token, owner, repo, prNumber, targets: [] };
   const pr = validatePullRequest(
     await githubApi(token, `/repos/${owner}/${repo}/pulls/${prNumber}`),
@@ -454,9 +454,15 @@ async function main() {
   ]);
   const prompt = buildPrompt({ pr, diff, commits, reviews, targets, command });
   const response = extractAgentResponse(
-    runOpenCode(command.model, prompt),
+    runOpenCode(
+      command.model,
+      prompt,
+      targets.map(target => target.id)
+    ),
     targets.map(target => target.id)
   );
+  token = await getAppToken();
+  failureContext.token = token;
   const dirty = Boolean(git('status', '--porcelain'));
   const applied = validateChangeResult(dirty, response.results);
 
@@ -514,10 +520,12 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(message);
     if (failureContext) {
-      const { token, owner, repo, prNumber, targets } = failureContext;
+      let { token } = failureContext;
+      const { owner, repo, prNumber, targets } = failureContext;
       const runUrl = `https://github.com/${owner}/${repo}/actions/runs/${process.env.GITHUB_RUN_ID}`;
       const body = `**OpenCode: failed**\n\nThe feedback was not applied because the automation failed. [View the run](${runUrl}) for details.`;
       try {
+        token = await getAppToken();
         if (targets.length) {
           for (const target of targets) {
             await replyToTarget(token, owner, repo, prNumber, target, body);
