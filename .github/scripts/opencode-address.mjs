@@ -283,6 +283,7 @@ function runOpenCode(model, prompt) {
       'opencode',
       [
         'run',
+        'Address the review feedback using the attached context.',
         '--auto',
         '--format',
         'json',
@@ -292,7 +293,6 @@ function runOpenCode(model, prompt) {
         model,
         '--file',
         promptFile,
-        'Address the review feedback using the attached context.',
       ],
       { encoding: 'utf8', env: childEnv, maxBuffer: 20 * 1024 * 1024 }
     );
