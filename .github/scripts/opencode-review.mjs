@@ -116,13 +116,16 @@ export function extractReviewResponse(stdout, reviewable) {
     })
     .join('')
     .trim();
+  let validationError = null;
   for (const candidate of extractJsonObjects(text).reverse()) {
     try {
       return validateReviewResponse(JSON.parse(candidate), reviewable);
-    } catch {
+    } catch (error) {
+      validationError = error;
       // Continue until a schema-valid review is found.
     }
   }
+  if (validationError) throw validationError;
   throw new Error('OpenCode did not return a valid structured review');
 }
 
@@ -173,7 +176,7 @@ function runOpenCode(prompt, reviewable) {
       'opencode',
       [
         'run',
-        `Review the attached PR context. Return only the required JSON. Valid paths: ${paths.join(', ')}`,
+        `Review the attached PR context. Return ONLY one JSON object, with no prose or Markdown. Required shape: {"summary":"concise review","findings":[{"path":"one valid path","line":123,"severity":"critical|high|medium|low","title":"short title","body":"specific impact and fix guidance"}]}. Use an empty findings array when there are no actionable issues. Valid paths: ${paths.join(', ')}`,
         '--auto',
         '--format',
         'json',
