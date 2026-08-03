@@ -5,6 +5,13 @@ import { fileURLToPath } from 'node:url';
 const TRUSTED_ASSOCIATIONS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
 const MODEL = 'nvidia/nvidia/nemotron-3-super-120b-a12b';
 const MAX_FINDINGS = 10;
+const PENDING_LABEL = 'opencode-review-pending';
+
+export function reviewReadiness(pr) {
+  if (pr.mergeable === false || pr.mergeable_state === 'dirty') return 'conflicted';
+  if (pr.mergeable == null || pr.mergeable_state === 'unknown') return 'unknown';
+  return 'ready';
+}
 
 export function parseReviewableLines(diff) {
   const reviewable = new Map();
@@ -144,6 +151,48 @@ async function githubApi(token, path, options = {}) {
   return response.json();
 }
 
+function delay(milliseconds) {
+  return new Promise(resolve => setTimeout(resolve, milliseconds));
+}
+
+async function fetchPullRequestWithMergeability(token, owner, repo, prNumber) {
+  let pr = null;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    pr = await githubApi(token, `/repos/${owner}/${repo}/pulls/${prNumber}`);
+    if (reviewReadiness(pr) !== 'unknown') return pr;
+    if (attempt < 3) await delay(2000);
+  }
+  return pr;
+}
+
+async function markReviewPending(token, owner, repo, prNumber) {
+  try {
+    await githubApi(token, `/repos/${owner}/${repo}/labels`, {
+      method: 'POST',
+      body: JSON.stringify({
+        name: PENDING_LABEL,
+        color: 'd4c5f9',
+        description: 'OpenCode review is waiting for merge conflicts to be resolved',
+      }),
+    });
+  } catch (error) {
+    if (!String(error).includes('422')) throw error;
+  }
+  await githubApi(token, `/repos/${owner}/${repo}/issues/${prNumber}/labels`, {
+    method: 'POST',
+    body: JSON.stringify({ labels: [PENDING_LABEL] }),
+  });
+}
+
+async function clearPendingReview(token, owner, repo, prNumber, labels) {
+  if (!labels.some(label => label.name === PENDING_LABEL)) return;
+  await githubApi(
+    token,
+    `/repos/${owner}/${repo}/issues/${prNumber}/labels/${encodeURIComponent(PENDING_LABEL)}`,
+    { method: 'DELETE' }
+  );
+}
+
 async function getAppToken() {
   const requestUrl = process.env.ACTIONS_ID_TOKEN_REQUEST_URL;
   const requestToken = process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN;
@@ -208,7 +257,10 @@ function formatFinding(finding) {
 
 async function main() {
   const payload = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
-  if (!TRUSTED_ASSOCIATIONS.has(payload.comment?.author_association)) {
+  const isPendingResume =
+    process.env.GITHUB_EVENT_NAME === 'pull_request' &&
+    payload.pull_request?.labels?.some(label => label.name === PENDING_LABEL);
+  if (!isPendingResume && !TRUSTED_ASSOCIATIONS.has(payload.comment?.author_association)) {
     throw new Error('The triggering author is not trusted');
   }
   const repository = payload.repository.full_name;
@@ -219,9 +271,14 @@ async function main() {
   }
 
   let token = await getAppToken();
-  const pr = await githubApi(token, `/repos/${owner}/${repo}/pulls/${prNumber}`);
+  const pr = await fetchPullRequestWithMergeability(token, owner, repo, prNumber);
   if (pr.state !== 'open') throw new Error('The pull request is not open');
   if (pr.head.repo.full_name !== repository) throw new Error('Fork pull requests are not supported');
+  if (reviewReadiness(pr) !== 'ready') {
+    await markReviewPending(token, owner, repo, prNumber);
+    console.log('OpenCode review deferred until merge conflicts are resolved.');
+    return;
+  }
   const diffResponse = await fetch(pr.diff_url, {
     headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github.v3.diff' },
   });
@@ -235,7 +292,8 @@ async function main() {
   execFileSync('git', ['checkout', '--detach', pr.head.sha], { stdio: 'inherit' });
   mkdirSync('.opencode/agents', { recursive: true });
   writeFileSync('.opencode/agents/pr-inline-reviewer.md', agentDefinition, { mode: 0o600 });
-  const prompt = `Review PR #${prNumber}: ${pr.title}\n\nTriggering request: ${payload.comment.body}\n\nPR description:\n${pr.body ?? ''}\n\nReport only actionable issues introduced by this PR. Every finding must use a path and RIGHT-side line present in the diff below. Prefer the smallest useful set and return at most ${MAX_FINDINGS}.\n\nReturn exactly:\n{"summary":"concise overall review","findings":[{"path":"src/file.ts","line":12,"severity":"critical|high|medium|low","title":"short title","body":"specific impact and fix guidance"}]}\n\nPR diff:\n${diff}`;
+  const request = payload.comment?.body ?? '/oc review resumed after conflict resolution';
+  const prompt = `Review PR #${prNumber}: ${pr.title}\n\nTriggering request: ${request}\n\nPR description:\n${pr.body ?? ''}\n\nReport only actionable issues introduced by this PR. Every finding must use a path and RIGHT-side line present in the diff below. Prefer the smallest useful set and return at most ${MAX_FINDINGS}.\n\nReturn exactly:\n{"summary":"concise overall review","findings":[{"path":"src/file.ts","line":12,"severity":"critical|high|medium|low","title":"short title","body":"specific impact and fix guidance"}]}\n\nPR diff:\n${diff}`;
   const response = extractReviewResponse(runOpenCode(prompt, reviewable), reviewable);
 
   token = await getAppToken();
@@ -267,6 +325,7 @@ async function main() {
       })),
     }),
   });
+  await clearPendingReview(token, owner, repo, prNumber, pr.labels ?? []);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

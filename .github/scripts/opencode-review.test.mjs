@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   extractReviewResponse,
   parseReviewableLines,
+  reviewReadiness,
   validateReviewResponse,
 } from './opencode-review.mjs';
 
@@ -59,4 +60,11 @@ test('extracts a structured review from OpenCode JSON events', () => {
     part: { text: `Review complete.\n${JSON.stringify(review)}` },
   });
   assert.deepEqual(extractReviewResponse(stdout, lines), review);
+});
+
+test('defers reviews until GitHub reports the PR as mergeable', () => {
+  assert.equal(reviewReadiness({ mergeable: false, mergeable_state: 'dirty' }), 'conflicted');
+  assert.equal(reviewReadiness({ mergeable: null, mergeable_state: 'unknown' }), 'unknown');
+  assert.equal(reviewReadiness({ mergeable: true, mergeable_state: 'clean' }), 'ready');
+  assert.equal(reviewReadiness({ mergeable: true, mergeable_state: 'blocked' }), 'ready');
 });

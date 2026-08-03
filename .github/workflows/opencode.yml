@@ -5,6 +5,8 @@ on:
     types: [created]
   pull_request_review_comment:
     types: [created]
+  pull_request:
+    types: [synchronize, reopened, ready_for_review]
 
 jobs:
   opencode:
@@ -41,16 +43,18 @@ jobs:
   review:
     timeout-minutes: 20
     if: |
-      github.event.sender.type == 'User' &&
-      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) &&
-      (startsWith(github.event.comment.body, '/oc review') ||
-       startsWith(github.event.comment.body, '/opencode review'))
+      (github.event.sender.type == 'User' &&
+       contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) &&
+       (startsWith(github.event.comment.body, '/oc review') ||
+        startsWith(github.event.comment.body, '/opencode review'))) ||
+      (github.event_name == 'pull_request' &&
+       contains(github.event.pull_request.labels.*.name, 'opencode-review-pending'))
     runs-on: ubuntu-latest
     permissions:
       id-token: write
       contents: read
       pull-requests: write
-      issues: read
+      issues: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
