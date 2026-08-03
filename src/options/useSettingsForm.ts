@@ -3,11 +3,8 @@ import { useTheme } from '@/shared/theme';
 import { downloadLocalModel, hasLocalModel } from './model-storage';
 import { DEFAULT_SETTINGS, mergeSettings, type ExtensionSettings } from './settings-model';
 
-const SETTINGS_KEY = 'chrome-ai-settings';
-
 export function useSettingsForm() {
   const [settings, setSettings] = useState<ExtensionSettings>(DEFAULT_SETTINGS);
-  const [isLoaded, setIsLoaded] = useState(false);
   const [saved, setSaved] = useState(false);
   const [localModelStatus, setLocalModelStatus] = useState({ ready: false, progress: 0 });
   useTheme(settings.ui.theme);
@@ -17,15 +14,9 @@ export function useSettingsForm() {
     void refreshLocalModelStatus();
   }, []);
 
-  useEffect(() => {
-    if (!isLoaded) return;
-    void chrome.storage.sync.set({ [SETTINGS_KEY]: settings });
-  }, [isLoaded, settings]);
-
   async function loadSettings() {
-    const result = await chrome.storage.sync.get(SETTINGS_KEY);
-    setSettings(mergeSettings(result[SETTINGS_KEY]));
-    setIsLoaded(true);
+    const result = await chrome.runtime.sendMessage({ type: 'GET_SETTINGS' });
+    setSettings(mergeSettings(result?.settings));
   }
 
   async function refreshLocalModelStatus() {
@@ -34,14 +25,14 @@ export function useSettingsForm() {
   }
 
   async function saveSettings(next = settings) {
-    await chrome.storage.sync.set({ [SETTINGS_KEY]: next });
+    await updateSettings(next);
     setSaved(true);
     window.setTimeout(() => setSaved(false), 2000);
   }
 
   async function resetSettings() {
-    await chrome.storage.sync.remove(SETTINGS_KEY);
     setSettings(DEFAULT_SETTINGS);
+    await updateSettings(DEFAULT_SETTINGS);
   }
 
   function exportSettings() {
@@ -97,4 +88,9 @@ export function useSettingsForm() {
     importSettings,
     startModelDownload,
   };
+}
+
+async function updateSettings(settings: ExtensionSettings) {
+  const response = await chrome.runtime.sendMessage({ type: 'UPDATE_SETTINGS', settings });
+  if (response?.error) throw new Error(response.error);
 }

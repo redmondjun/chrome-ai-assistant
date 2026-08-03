@@ -210,6 +210,57 @@ body {
 .settings-alert button.bg-primary-600:hover {
   color: #fff !important;
 }
+
+.account-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.account-summary p {
+  margin-top: 3px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.sync-badge {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  color: var(--accent);
+  font-size: 11px;
+  text-transform: capitalize;
+}
+.sync-badge.sync-error {
+  color: var(--danger);
+}
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.auth-divider::before,
+.auth-divider::after {
+  height: 1px;
+  flex: 1;
+  background: var(--border);
+  content: '';
+}
+.auth-links {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.auth-links button {
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 12px;
+}
 .save-bar {
   position: sticky;
   z-index: 3;
