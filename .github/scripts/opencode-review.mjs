@@ -299,7 +299,19 @@ async function main() {
   writeFileSync('.opencode/agents/pr-inline-reviewer.md', agentDefinition, { mode: 0o600 });
   const request = payload.comment?.body ?? '/oc review resumed after conflict resolution';
   const prompt = `Review PR #${prNumber}: ${pr.title}\n\nTriggering request: ${request}\n\nPR description:\n${pr.body ?? ''}\n\nReport only actionable issues introduced by this PR. Every finding must use a path and RIGHT-side line present in the diff below. Prefer the smallest useful set and return at most ${MAX_FINDINGS}.\n\nReturn exactly:\n{"summary":"concise overall review","findings":[{"path":"src/file.ts","line":12,"severity":"critical|high|medium|low","title":"short title","body":"specific impact and fix guidance"}]}\n\nPR diff:\n${diff}`;
-  const response = extractReviewResponse(runOpenCode(prompt, reviewable), reviewable);
+  let response;
+  let correction = '';
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      response = extractReviewResponse(runOpenCode(`${prompt}${correction}`, reviewable), reviewable);
+      break;
+    } catch (error) {
+      if (attempt === 2) throw error;
+      const reason = error instanceof Error ? error.message : String(error);
+      console.warn(`OpenCode returned an invalid review: ${reason}. Requesting one correction.`);
+      correction = `\n\nYour previous response was rejected: ${reason}. Re-check the unified diff and return corrected JSON. Omit any finding that cannot be attached to a RIGHT-side line in the diff.`;
+    }
+  }
 
   token = await getAppToken();
   const existing = await githubApi(
