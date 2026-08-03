@@ -41,6 +41,29 @@ Download latest release from GitHub Releases and load as unpacked extension.
 4. Toggle **Local Model** for on-device processing (downloads ~2.5GB on first use)
 5. Configure link following behavior
 
+### Accounts and cross-device sync
+
+Accounts are optional. Without one, chats and settings stay in the current Chrome profile. With an
+account, chat history and non-secret preferences sync through Supabase. NVIDIA API keys, downloaded
+models, local-model selection, and the local-only preference never upload.
+
+1. Create a Supabase project and apply
+   `supabase/migrations/202608030001_account_sync.sql` in the SQL editor or with the Supabase CLI.
+2. Copy `.env.example` to `.env.local` and set the project URL and publishable key. Never place a
+   service-role key in an extension build.
+3. Enable Email and Google under Authentication → Providers. Create Google's OAuth client as a web
+   application and use the Supabase callback URL shown on the provider page.
+4. Build/load the extension, copy its ID from `chrome://extensions`, and add
+   `https://EXTENSION_ID.chromiumapp.org/auth` to Supabase Authentication → URL Configuration →
+   Redirect URLs. Published builds use their fixed Chrome Web Store extension ID; development builds
+   need a stable unpacked-extension ID or a matching redirect entry.
+5. Change the Confirm signup and Reset password email templates to display `{{ .Token }}` as a
+   6-digit code. Configure custom SMTP before production; Supabase's default mailer is only suitable
+   for testing.
+
+When **Local-only mode** is enabled, account access and synchronization pause completely. Changes
+remain queued in local storage and synchronize after local-only mode is disabled.
+
 ## Usage
 
 1. Navigate to any page
