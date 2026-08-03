@@ -30,6 +30,10 @@ global.chrome = {
   scripting: {
     executeScript: jest.fn(),
   },
+  identity: {
+    getRedirectURL: jest.fn(() => 'https://test-extension.chromiumapp.org/auth'),
+    launchWebAuthFlow: jest.fn(),
+  },
 } as any;
 
 Object.assign(global, { TextDecoder, TextEncoder });

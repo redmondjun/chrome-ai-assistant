@@ -1,5 +1,11 @@
 import React from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
+jest.mock('@/shared/useAccount', () => ({
+  useAccount: () => ({
+    account: { configured: false, user: null },
+    syncStatus: { state: 'idle' },
+  }),
+}));
 jest.mock('marked', () => ({
   marked: {
     parse: (value: string) =>

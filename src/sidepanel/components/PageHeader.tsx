@@ -1,5 +1,6 @@
 import React from 'react';
 import type { ChatConversation, ModelSettings, TabContent } from '@/shared/types';
+import { useAccount } from '@/shared/useAccount';
 
 interface PageHeaderProps {
   page: TabContent | null;
@@ -99,6 +100,7 @@ function HeaderActions({
           </option>
         ))}
       </select>
+      <AccountButton onOpenSettings={onOpenSettings} />
       <button
         className="new-chat-button"
         type="button"
@@ -131,6 +133,23 @@ function HeaderActions({
         <SettingsIcon />
       </button>
     </div>
+  );
+}
+
+function AccountButton({ onOpenSettings }: { onOpenSettings: () => void }) {
+  const { account, syncStatus } = useAccount();
+  const label = account.user ? `Account: ${account.user.email}` : 'Sign in to sync';
+  const initial = account.user?.email.charAt(0).toUpperCase() || '↗';
+  return (
+    <button
+      className={`account-button sync-${syncStatus.state}`}
+      type="button"
+      aria-label={label}
+      title={label}
+      onClick={onOpenSettings}
+    >
+      {initial}
+    </button>
   );
 }
 

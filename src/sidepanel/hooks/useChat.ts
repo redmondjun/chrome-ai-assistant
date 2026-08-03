@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { loadChatState, saveChatState } from '../chat-storage';
 import type { ChatConversation, ChatMessage, TabContent } from '@/shared/types';
+import { ACCOUNT_STATE_KEY, ANONYMOUS_SCOPE } from '@/shared/storage';
 
 interface ResearchOptions {
   localOnly: boolean;
@@ -16,30 +17,67 @@ export function useChat(page: TabContent | null, researchOptions: ResearchOption
   const [isLoading, setIsLoading] = useState(false);
   const [activeMessageId, setActiveMessageId] = useState<string>();
   const [isHistoryLoaded, setIsHistoryLoaded] = useState(false);
+  const [scope, setScope] = useState(ANONYMOUS_SCOPE);
   const [deepResearch, setDeepResearch] = useState(false);
   const activeConversation = conversations.find(chat => chat.id === activeConversationId);
   const messages = activeConversation?.messages || [];
 
   useEffect(() => {
     let active = true;
-    void loadChatState().then(({ conversations: chats, activeConversationId: savedActiveId }) => {
+    void chrome.storage.local.get(ACCOUNT_STATE_KEY).then(result => {
       if (!active) return;
-      const selected = chats.find(chat => chat.id === savedActiveId) || chats[0];
-      const initial = selected || createConversation();
-      setConversations(selected ? chats : [initial]);
-      setActiveConversationId(initial.id);
-      setIsHistoryLoaded(true);
+      setScope(result[ACCOUNT_STATE_KEY]?.user?.id || ANONYMOUS_SCOPE);
     });
-
     return () => {
       active = false;
     };
   }, []);
 
   useEffect(() => {
+    let active = true;
+    setIsHistoryLoaded(false);
+    void loadChatState(scope).then(
+      ({ conversations: chats, activeConversationId: savedActiveId }) => {
+        if (!active) return;
+        const selected = chats.find(chat => chat.id === savedActiveId) || chats[0];
+        const initial = selected || createConversation();
+        setConversations(selected ? chats : [initial]);
+        setActiveConversationId(initial.id);
+        setIsHistoryLoaded(true);
+      }
+    );
+
+    return () => {
+      active = false;
+    };
+  }, [scope]);
+
+  useEffect(() => {
     if (!isHistoryLoaded) return;
-    void saveChatState(conversations, activeConversationId);
-  }, [activeConversationId, conversations, isHistoryLoaded]);
+    void saveChatState(conversations, activeConversationId, scope);
+  }, [activeConversationId, conversations, isHistoryLoaded, scope]);
+
+  useEffect(() => {
+    if (!isHistoryLoaded || scope === ANONYMOUS_SCOPE) return;
+    const timeout = window.setTimeout(() => {
+      void chrome.runtime.sendMessage({
+        type: 'SYNC_PUSH_CONVERSATIONS',
+        conversations,
+      });
+    }, 800);
+    return () => window.clearTimeout(timeout);
+  }, [conversations, isHistoryLoaded, scope]);
+
+  useEffect(() => {
+    if (scope === ANONYMOUS_SCOPE) return;
+    const pull = async () => {
+      const response = await chrome.runtime.sendMessage({ type: 'SYNC_PULL' });
+      if (Array.isArray(response?.conversations)) setConversations(response.conversations);
+    };
+    void pull();
+    const interval = window.setInterval(() => void pull(), 30_000);
+    return () => window.clearInterval(interval);
+  }, [scope]);
 
   useEffect(() => {
     const runningResearch = messages.find(
@@ -86,6 +124,14 @@ export function useChat(page: TabContent | null, researchOptions: ResearchOption
   useEffect(() => {
     const handleMessage = (message: any) => {
       switch (message.type) {
+        case 'ACCOUNT_STATE_CHANGED':
+          setScope(message.account?.user?.id || ANONYMOUS_SCOPE);
+          break;
+        case 'SYNC_DATA_CHANGED':
+          if (message.scope === scope && Array.isArray(message.conversations)) {
+            setConversations(message.conversations);
+          }
+          break;
         case 'STREAM_CHUNK':
           updateMessage(message.messageId, current => ({
             ...current,
@@ -141,7 +187,7 @@ export function useChat(page: TabContent | null, researchOptions: ResearchOption
 
     chrome.runtime.onMessage.addListener(handleMessage);
     return () => chrome.runtime.onMessage.removeListener(handleMessage);
-  }, [finishMessage, updateMessage]);
+  }, [finishMessage, scope, updateMessage]);
 
   const send = useCallback(
     async (prompt?: string) => {

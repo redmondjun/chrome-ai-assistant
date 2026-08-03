@@ -74,16 +74,20 @@ function mockMissingLocalModel() {
 }
 
 describe('side panel App', () => {
-  let runtimeListener: ((message: any) => void) | undefined;
+  let runtimeListeners: Array<(message: any) => void>;
+
+  function dispatchRuntimeMessage(message: any) {
+    runtimeListeners.forEach(listener => listener(message));
+  }
 
   beforeEach(() => {
     jest.clearAllMocks();
-    runtimeListener = undefined;
+    runtimeListeners = [];
     window.confirm = jest.fn(() => true);
     mockMissingLocalModel();
     (chrome.tabs.query as jest.Mock).mockResolvedValue([{ id: 42 }]);
     (chrome.runtime.onMessage.addListener as jest.Mock).mockImplementation(listener => {
-      runtimeListener = listener;
+      runtimeListeners.push(listener);
     });
     (chrome.storage.sync.get as jest.Mock).mockResolvedValue({
       'chrome-ai-settings': savedSettings,
@@ -92,12 +96,23 @@ describe('side panel App', () => {
     (chrome.storage.local.set as jest.Mock).mockResolvedValue(undefined);
     (chrome.runtime.sendMessage as jest.Mock).mockImplementation(async message => {
       if (message.type === 'GET_TAB_CONTENT') return { type: 'TAB_CONTENT', content: page };
+      if (message.type === 'GET_SETTINGS') return { settings: savedSettings };
+      if (message.type === 'AUTH_GET_STATE') {
+        return { account: { configured: false, user: null } };
+      }
       return { ok: true };
     });
   });
 
   it('shows API-key onboarding when neither cloud nor local AI is configured', async () => {
-    (chrome.storage.sync.get as jest.Mock).mockResolvedValue({});
+    (chrome.runtime.sendMessage as jest.Mock).mockImplementation(async message => {
+      if (message.type === 'GET_SETTINGS') return { settings: {} };
+      if (message.type === 'GET_TAB_CONTENT') return { type: 'TAB_CONTENT', content: page };
+      if (message.type === 'AUTH_GET_STATE') {
+        return { account: { configured: false, user: null } };
+      }
+      return { ok: true };
+    });
 
     render(<App />);
 
@@ -131,14 +146,14 @@ describe('side panel App', () => {
       .find(message => message.type === 'ASK_QUESTION');
 
     act(() =>
-      runtimeListener?.({
+      dispatchRuntimeMessage({
         type: 'STREAM_CHUNK',
         messageId: ask.messageId,
         chunk: 'A concise answer.',
       })
     );
     act(() =>
-      runtimeListener?.({
+      dispatchRuntimeMessage({
         type: 'LINK_DECISION',
         messageId: ask.messageId,
         decision: {
@@ -152,14 +167,14 @@ describe('side panel App', () => {
         },
       })
     );
-    act(() => runtimeListener?.({ type: 'STREAM_DONE', messageId: ask.messageId }));
+    act(() => dispatchRuntimeMessage({ type: 'STREAM_DONE', messageId: ask.messageId }));
 
     expect(screen.getByText('A concise answer.')).toBeInTheDocument();
     expect(screen.queryByText('Generating')).not.toBeInTheDocument();
     await waitFor(() =>
       expect(chrome.storage.local.set).toHaveBeenCalledWith(
         expect.objectContaining({
-          'chrome-ai-conversations': expect.arrayContaining([
+          'chrome-ai-conversations:anonymous': expect.arrayContaining([
             expect.objectContaining({
               messages: expect.arrayContaining([
                 expect.objectContaining({ role: 'user', content: 'What is this about?' }),
@@ -243,6 +258,10 @@ describe('side panel App', () => {
 
   it('does not duplicate an error prefix from the background worker', async () => {
     (chrome.runtime.sendMessage as jest.Mock).mockImplementation(async message => {
+      if (message.type === 'GET_SETTINGS') return { settings: savedSettings };
+      if (message.type === 'AUTH_GET_STATE') {
+        return { account: { configured: false, user: null } };
+      }
       if (message.type === 'GET_TAB_CONTENT') return { type: 'TAB_CONTENT', content: page };
       if (message.type === 'ASK_QUESTION') return { error: 'Error: Router not initialized' };
       return { ok: true };
@@ -260,9 +279,20 @@ describe('side panel App', () => {
   });
 
   it('shows a readable page error and retries successfully', async () => {
-    (chrome.runtime.sendMessage as jest.Mock)
-      .mockResolvedValueOnce({ error: 'Chrome does not allow extensions to read this page.' })
-      .mockResolvedValueOnce({ type: 'TAB_CONTENT', content: page });
+    let tabRequest = 0;
+    (chrome.runtime.sendMessage as jest.Mock).mockImplementation(async message => {
+      if (message.type === 'GET_SETTINGS') return { settings: savedSettings };
+      if (message.type === 'AUTH_GET_STATE') {
+        return { account: { configured: false, user: null } };
+      }
+      if (message.type === 'GET_TAB_CONTENT') {
+        tabRequest += 1;
+        return tabRequest === 1
+          ? { error: 'Chrome does not allow extensions to read this page.' }
+          : { type: 'TAB_CONTENT', content: page };
+      }
+      return { ok: true };
+    });
 
     render(<App />);
 

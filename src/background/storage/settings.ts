@@ -1,4 +1,11 @@
 import type { StorageSettings, ModelSettings, LinkFollowSettings } from '@/shared/types';
+import {
+  LEGACY_SETTINGS_KEY,
+  LOCAL_SETTINGS_KEY,
+  SETTINGS_UPDATED_AT_KEY,
+  mergeSyncedSettings,
+  toSyncedSettings,
+} from '@/shared/storage';
 
 const DEFAULT_MODEL_SETTINGS: ModelSettings = {
   cloudModel: 'nemotron-3-nano',
@@ -48,24 +55,25 @@ export const DEFAULT_SETTINGS: StorageSettings = {
   },
 };
 
-const SETTINGS_KEY = 'chrome-ai-settings';
-
 export async function getSettings(): Promise<StorageSettings> {
-  const result = await chrome.storage.sync.get(SETTINGS_KEY);
-  return deepMerge(DEFAULT_SETTINGS, result[SETTINGS_KEY] || {});
+  await migrateLegacySettings();
+  const result = await chrome.storage.local.get(LOCAL_SETTINGS_KEY);
+  return deepMerge(DEFAULT_SETTINGS, result[LOCAL_SETTINGS_KEY] || {});
 }
 
 export async function saveSettings(settings: Partial<StorageSettings>): Promise<void> {
   const current = await getSettings();
   const merged = deepMerge(current, settings);
-  await chrome.storage.sync.set({ [SETTINGS_KEY]: merged });
-  return merged;
+  await chrome.storage.local.set({
+    [LOCAL_SETTINGS_KEY]: merged,
+    [SETTINGS_UPDATED_AT_KEY]: Date.now(),
+  });
 }
 
 export function onSettingsChanged(callback: (settings: StorageSettings) => void): () => void {
   const listener = (changes: { [key: string]: chrome.storage.StorageChange }) => {
-    if (changes[SETTINGS_KEY]) {
-      callback({ ...DEFAULT_SETTINGS, ...changes[SETTINGS_KEY].newValue });
+    if (changes[LOCAL_SETTINGS_KEY]) {
+      callback(deepMerge(DEFAULT_SETTINGS, changes[LOCAL_SETTINGS_KEY].newValue || {}));
     }
   };
   chrome.storage.onChanged.addListener(listener);
@@ -85,5 +93,43 @@ function deepMerge(target: any, source: any): any {
 }
 
 export async function clearSettings(): Promise<void> {
-  await chrome.storage.sync.remove(SETTINGS_KEY);
+  await chrome.storage.local.remove(LOCAL_SETTINGS_KEY);
+}
+
+export async function applySyncedSettings(
+  settings: unknown,
+  updatedAt: number
+): Promise<StorageSettings> {
+  const current = await getSettings();
+  const merged = mergeSyncedSettings(current, settings as any);
+  await chrome.storage.local.set({
+    [LOCAL_SETTINGS_KEY]: merged,
+    [SETTINGS_UPDATED_AT_KEY]: updatedAt,
+  });
+  return merged;
+}
+
+export async function getSyncedSettings() {
+  return toSyncedSettings(await getSettings());
+}
+
+export async function getSettingsUpdatedAt(): Promise<number> {
+  const result = await chrome.storage.local.get(SETTINGS_UPDATED_AT_KEY);
+  return Number(result[SETTINGS_UPDATED_AT_KEY] || 0);
+}
+
+async function migrateLegacySettings(): Promise<void> {
+  const local = await chrome.storage.local.get(LOCAL_SETTINGS_KEY);
+  if (local[LOCAL_SETTINGS_KEY]) return;
+
+  const legacy = await chrome.storage.sync.get(LEGACY_SETTINGS_KEY);
+  const merged = deepMerge(DEFAULT_SETTINGS, legacy[LEGACY_SETTINGS_KEY] || {});
+  await chrome.storage.local.set({
+    [LOCAL_SETTINGS_KEY]: merged,
+    [SETTINGS_UPDATED_AT_KEY]: 0,
+  });
+  const verified = await chrome.storage.local.get(LOCAL_SETTINGS_KEY);
+  if (verified[LOCAL_SETTINGS_KEY] && legacy[LEGACY_SETTINGS_KEY]) {
+    await chrome.storage.sync.remove(LEGACY_SETTINGS_KEY);
+  }
 }

@@ -45,3 +45,19 @@ jobs:
 
       - name: Build extension
         run: npm run build
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+
+      - name: Package extension
+        if: github.event_name == 'push'
+        run: cd dist && zip -r ../chrome-ai-extension.zip .
+
+      - name: Upload extension package
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: chrome-ai-extension-${{ github.sha }}
+          path: chrome-ai-extension.zip
+          if-no-files-found: error
+          retention-days: 30

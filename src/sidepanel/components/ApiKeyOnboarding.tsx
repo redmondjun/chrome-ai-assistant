@@ -41,7 +41,7 @@ export function ApiKeyOnboarding({ onSave, onOpenSettings }: ApiKeyOnboardingPro
             autoFocus
           />
           <small>
-            Your key is stored in Chrome sync. Create one at{' '}
+            Your key stays on this device. Create one at{' '}
             <a href="https://build.nvidia.com" target="_blank" rel="noopener noreferrer">
               build.nvidia.com
             </a>

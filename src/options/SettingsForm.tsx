@@ -1,5 +1,6 @@
 import React from 'react';
 import { AppearancePrivacySection } from './components/AppearancePrivacySection';
+import { AccountSyncSection } from './components/AccountSyncSection';
 import { BackupRestoreSection } from './components/BackupRestoreSection';
 import { LinkSettingsSection } from './components/LinkSettingsSection';
 import { ModelSettingsSection } from './components/ModelSettingsSection';
@@ -36,6 +37,7 @@ export function SettingsForm() {
       )}
 
       <div className="space-y-6">
+        <AccountSyncSection />
         <ModelSettingsSection
           settings={settings.model}
           localModelStatus={localModelStatus}

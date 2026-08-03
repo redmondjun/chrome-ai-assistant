@@ -69,6 +69,14 @@ describe('SettingsForm', () => {
     });
     (chrome.storage.sync.set as jest.Mock).mockResolvedValue(undefined);
     (chrome.storage.sync.remove as jest.Mock).mockResolvedValue(undefined);
+    (chrome.storage.local.get as jest.Mock).mockResolvedValue({});
+    (chrome.runtime.sendMessage as jest.Mock).mockImplementation(async message => {
+      if (message.type === 'GET_SETTINGS') return { settings: storedSettings };
+      if (message.type === 'AUTH_GET_STATE') {
+        return { account: { configured: false, user: null } };
+      }
+      return { ok: true };
+    });
   });
 
   it('loads the stored theme and preserves hidden detail preferences when saving', async () => {
@@ -79,8 +87,9 @@ describe('SettingsForm', () => {
     fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
 
     await waitFor(() =>
-      expect(chrome.storage.sync.set).toHaveBeenCalledWith({
-        'chrome-ai-settings': expect.objectContaining({
+      expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({
+        type: 'UPDATE_SETTINGS',
+        settings: expect.objectContaining({
           ui: expect.objectContaining({
             theme: 'light',
             showReasoning: false,
@@ -89,7 +98,7 @@ describe('SettingsForm', () => {
         }),
       })
     );
-    expect(screen.getByRole('status')).toHaveTextContent('Settings saved.');
+    expect(await screen.findByText('Settings saved.')).toBeInTheDocument();
   });
 
   it('shows a contrast-safe local-model warning when no model is stored', async () => {
@@ -116,8 +125,9 @@ describe('SettingsForm', () => {
     fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
 
     await waitFor(() =>
-      expect(chrome.storage.sync.set).toHaveBeenCalledWith({
-        'chrome-ai-settings': expect.objectContaining({
+      expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({
+        type: 'UPDATE_SETTINGS',
+        settings: expect.objectContaining({
           research: expect.objectContaining({
             workerConcurrency: 5,
             maxRelatedSourcesPerTask: 4,
@@ -136,7 +146,10 @@ describe('SettingsForm', () => {
     fireEvent.click(screen.getByRole('button', { name: /reset to defaults/i }));
 
     await waitFor(() =>
-      expect(chrome.storage.sync.remove).toHaveBeenCalledWith('chrome-ai-settings')
+      expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({
+        type: 'UPDATE_SETTINGS',
+        settings: expect.objectContaining({ ui: expect.objectContaining({ theme: 'system' }) }),
+      })
     );
     expect(screen.getByLabelText('Theme')).toHaveValue('system');
   });
