@@ -1,8 +1,23 @@
-import { getSettings, onSettingsChanged } from './storage/settings';
+import { getSettings, onSettingsChanged, saveSettings } from './storage/settings';
+import {
+  getAccountState,
+  initializeAccount,
+  pullSync,
+  pushConversations,
+  pushSettings,
+  requestRecovery,
+  signIn,
+  signInWithGoogle,
+  signOut,
+  signUp,
+  updatePassword,
+  verifyEmail,
+  verifyRecovery,
+} from './sync/supabase';
 import { ModelRouter, createRouter } from './api/router';
 import { analyzeWithReasoning, AnalysisCallbacks } from './pipeline/analyze';
 import { getTabContent } from './content/tab-content';
-import type { BackgroundMessage, TabContent, StorageSettings } from '@/shared/types';
+import type { BackgroundMessage, TabContent } from '@/shared/types';
 
 let router: ModelRouter | null = null;
 let currentContent: TabContent | null = null;
@@ -12,9 +27,10 @@ async function init() {
   const settings = await getSettings();
   router = createRouter(settings.model);
   await router.ensureLocalReady();
+  await initializeAccount();
 }
 
-init();
+void init().catch(error => console.error('[init]', error));
 
 onSettingsChanged(async settings => {
   if (router) {
@@ -151,6 +167,78 @@ chrome.runtime.onMessage.addListener((message: BackgroundMessage, sender, sendRe
 
         case 'UPDATE_SETTINGS': {
           await saveSettings(message.settings || {});
+          void pushSettings().catch(error => console.warn('[sync]', error));
+          sendResponse({ ok: true });
+          break;
+        }
+
+        case 'AUTH_GET_STATE': {
+          sendResponse({ account: await getAccountState() });
+          break;
+        }
+
+        case 'AUTH_SIGN_UP': {
+          sendResponse(
+            await signUp(required(message.email, 'email'), required(message.password, 'password'))
+          );
+          break;
+        }
+
+        case 'AUTH_VERIFY_EMAIL': {
+          await verifyEmail(required(message.email, 'email'), required(message.token, 'token'));
+          sendResponse({ ok: true });
+          break;
+        }
+
+        case 'AUTH_SIGN_IN': {
+          await signIn(required(message.email, 'email'), required(message.password, 'password'));
+          sendResponse({ ok: true });
+          break;
+        }
+
+        case 'AUTH_SIGN_IN_GOOGLE': {
+          await signInWithGoogle();
+          sendResponse({ ok: true });
+          break;
+        }
+
+        case 'AUTH_REQUEST_RECOVERY': {
+          await requestRecovery(required(message.email, 'email'));
+          sendResponse({ ok: true });
+          break;
+        }
+
+        case 'AUTH_VERIFY_RECOVERY': {
+          await verifyRecovery(required(message.email, 'email'), required(message.token, 'token'));
+          sendResponse({ ok: true });
+          break;
+        }
+
+        case 'AUTH_UPDATE_PASSWORD': {
+          await updatePassword(required(message.password, 'password'));
+          sendResponse({ ok: true });
+          break;
+        }
+
+        case 'AUTH_SIGN_OUT': {
+          await signOut();
+          sendResponse({ ok: true });
+          break;
+        }
+
+        case 'SYNC_PULL': {
+          sendResponse({ conversations: await pullSync() });
+          break;
+        }
+
+        case 'SYNC_PUSH_CONVERSATIONS': {
+          await pushConversations(message.conversations || []);
+          sendResponse({ ok: true });
+          break;
+        }
+
+        case 'SYNC_PUSH_SETTINGS': {
+          await pushSettings();
           sendResponse({ ok: true });
           break;
         }
@@ -170,22 +258,9 @@ chrome.runtime.onMessage.addListener((message: BackgroundMessage, sender, sendRe
   return true;
 });
 
-async function saveSettings(settings: Partial<StorageSettings>): Promise<void> {
-  const current = await getSettings();
-  const merged = deepMerge(current, settings);
-  await chrome.storage.sync.set({ 'chrome-ai-settings': merged });
-}
-
-function deepMerge(target: any, source: any): any {
-  const result = { ...target };
-  for (const key of Object.keys(source)) {
-    if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])) {
-      result[key] = deepMerge(target[key] || {}, source[key]);
-    } else {
-      result[key] = source[key];
-    }
-  }
-  return result;
+function required(value: string | undefined, name: string): string {
+  if (!value) throw new Error(`Missing ${name}`);
+  return value;
 }
 
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });

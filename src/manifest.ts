@@ -39,7 +39,7 @@ const manifest: ManifestV3 = {
   manifest_version: 3,
   description:
     'AI-powered browser assistant that reads tabs, follows links, and generates documents using NVIDIA Nemotron models',
-  permissions: ['activeTab', 'scripting', 'storage', 'sidePanel', 'tabs', 'offscreen'],
+  permissions: ['activeTab', 'identity', 'scripting', 'storage', 'sidePanel', 'tabs', 'offscreen'],
   host_permissions: ['<all_urls>'],
   background: {
     service_worker: 'background/index.js',

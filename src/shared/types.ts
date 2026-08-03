@@ -100,6 +100,25 @@ export interface ChatConversation {
   updatedAt: number;
 }
 
+export interface AccountState {
+  configured: boolean;
+  user: { id: string; email: string } | null;
+}
+
+export interface SyncStatus {
+  state: 'idle' | 'syncing' | 'synced' | 'paused' | 'error';
+  lastSyncedAt?: number;
+  error?: string;
+}
+
+/** Settings that are safe and meaningful to move between devices. */
+export interface SyncedSettings {
+  model: Omit<ModelSettings, 'apiKey' | 'useLocal'>;
+  links: LinkFollowSettings;
+  ui: StorageSettings['ui'];
+  privacy: Omit<StorageSettings['privacy'], 'localOnly'>;
+}
+
 export interface CompletionOptions {
   temperature?: number;
   maxTokens?: number;
@@ -123,7 +142,19 @@ export interface BackgroundMessage {
     | 'GET_SETTINGS'
     | 'UPDATE_SETTINGS'
     | 'PING'
-    | 'DOWNLOAD_MODEL';
+    | 'DOWNLOAD_MODEL'
+    | 'AUTH_GET_STATE'
+    | 'AUTH_SIGN_UP'
+    | 'AUTH_VERIFY_EMAIL'
+    | 'AUTH_SIGN_IN'
+    | 'AUTH_SIGN_IN_GOOGLE'
+    | 'AUTH_REQUEST_RECOVERY'
+    | 'AUTH_VERIFY_RECOVERY'
+    | 'AUTH_UPDATE_PASSWORD'
+    | 'AUTH_SIGN_OUT'
+    | 'SYNC_PULL'
+    | 'SYNC_PUSH_CONVERSATIONS'
+    | 'SYNC_PUSH_SETTINGS';
   tabId?: number;
   question?: string;
   context?: TabContent;
@@ -131,6 +162,10 @@ export interface BackgroundMessage {
   settings?: Partial<StorageSettings>;
   modelUrl?: string;
   messageId?: string;
+  email?: string;
+  password?: string;
+  token?: string;
+  conversations?: ChatConversation[];
 }
 
 export interface ContentScriptMessage {
