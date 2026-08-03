@@ -3,6 +3,7 @@ import { AppearancePrivacySection } from './components/AppearancePrivacySection'
 import { BackupRestoreSection } from './components/BackupRestoreSection';
 import { LinkSettingsSection } from './components/LinkSettingsSection';
 import { ModelSettingsSection } from './components/ModelSettingsSection';
+import { ResearchSettingsSection } from './components/ResearchSettingsSection';
 import { useSettingsForm } from './useSettingsForm';
 
 export function SettingsForm() {
@@ -44,6 +45,10 @@ export function SettingsForm() {
         <LinkSettingsSection
           settings={settings.links}
           onChange={links => setSettings(current => ({ ...current, links }))}
+        />
+        <ResearchSettingsSection
+          settings={settings.research}
+          onChange={research => setSettings(current => ({ ...current, research }))}
         />
         <AppearancePrivacySection
           ui={settings.ui}

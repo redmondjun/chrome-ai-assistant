@@ -353,6 +353,47 @@ summary:focus-visible {
   border-radius: 50%;
   animation: pulse 1s infinite;
 }
+.stream-progress {
+  margin: 0 0 7px;
+  padding: 9px 11px;
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--border));
+  border-radius: 9px;
+  background: var(--accent-soft);
+  color: var(--text);
+  font-size: 11px;
+}
+.stream-progress-row,
+.stream-progress-meta {
+  display: flex;
+  align-items: center;
+}
+.stream-progress-row {
+  gap: 7px;
+}
+.stream-progress-row strong {
+  overflow-wrap: anywhere;
+}
+.stream-progress-spinner {
+  flex: 0 0 auto;
+  width: 11px;
+  height: 11px;
+  border: 2px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+.stream-progress-meta {
+  gap: 12px;
+  margin: 5px 0 0 18px;
+  color: var(--muted);
+}
+.stream-progress-warning {
+  margin: 8px 0 0;
+  padding-top: 7px;
+  border-top: 1px solid color-mix(in srgb, var(--warning) 25%, transparent);
+  color: var(--warning);
+  line-height: 1.4;
+}
 .stop-button span {
   display: block;
   width: 9px;
@@ -449,20 +490,24 @@ summary:focus-visible {
   animation-delay: 0.3s;
 }
 .answer-details {
-  margin-top: 6px;
+  display: grid;
+  gap: 6px;
+  margin: 0 0 7px;
+}
+.answer-detail {
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface);
   color: var(--text);
 }
-.answer-details summary {
+.answer-detail summary {
   padding: 7px 10px;
   cursor: pointer;
   color: var(--muted);
   font-size: 11px;
   font-weight: 600;
 }
-.answer-details summary span {
+.answer-detail summary span {
   display: inline-grid;
   place-items: center;
   min-width: 17px;
@@ -478,13 +523,6 @@ summary:focus-visible {
 }
 .details-content section {
   margin-top: 10px;
-}
-.details-content h4 {
-  margin: 0 0 6px;
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--muted);
 }
 .details-content ol {
   margin: 0;
@@ -535,6 +573,98 @@ summary:focus-visible {
   padding: 9px 12px 10px;
   background: var(--surface);
   border-top: 1px solid var(--border);
+}
+.deep-research-toggle {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 7px;
+  align-items: center;
+  margin: 0 2px 8px;
+  color: var(--text);
+  font-size: 11px;
+}
+.deep-research-toggle small {
+  grid-column: 2;
+  color: var(--muted);
+}
+.research-job {
+  margin: 0 0 8px;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  border-radius: 9px;
+  background: var(--accent-soft);
+  font-size: 11px;
+}
+.research-job-heading,
+.research-job-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.research-job-heading span {
+  color: var(--muted);
+  text-transform: capitalize;
+}
+.research-job progress {
+  width: 100%;
+  margin-top: 8px;
+  accent-color: var(--accent);
+}
+.research-job-actions {
+  justify-content: flex-start;
+  margin-top: 9px;
+}
+.research-job-actions button {
+  padding: 4px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+.research-workers {
+  margin-top: 9px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+.research-worker {
+  margin-top: 6px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  padding: 6px 8px;
+}
+.research-worker > summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: pointer;
+}
+.research-worker > summary > span:first-child {
+  display: grid;
+  min-width: 0;
+}
+.research-worker > summary strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.research-worker summary small,
+.research-worker > summary > span:last-child {
+  color: var(--muted);
+}
+.research-worker p,
+.research-worker pre,
+.research-worker ol,
+.research-worker ul,
+.research-worker details {
+  margin: 5px 0;
+}
+.research-worker pre {
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  font: inherit;
 }
 .composer-note {
   margin: 0 0 6px;

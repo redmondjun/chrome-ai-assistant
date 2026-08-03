@@ -1,3 +1,5 @@
+import type { LinkSafetyResult } from './link-safety';
+
 export interface TabContent {
   url: string;
   title: string;
@@ -13,6 +15,7 @@ export interface LinkInfo {
   title?: string;
   context?: string;
   isExternal: boolean;
+  safety?: LinkSafetyResult;
 }
 
 export interface LinkVisit {
@@ -23,9 +26,20 @@ export interface LinkVisit {
   snippet?: string;
   timestamp: number;
   error?: string;
+  failureReason?: SourceFailureReason;
   method?: 'direct-fetch' | 'browser-tab';
   depth?: number;
 }
+
+export type RetrievedPageRejectionReason =
+  | 'authentication-required'
+  | 'access-denied'
+  | 'http-error'
+  | 'not-found'
+  | 'empty-application-shell';
+
+export type SourceFailureReason =
+  RetrievedPageRejectionReason | 'retrieval-failed' | 'source-budget-exhausted';
 
 export interface LinkDecision {
   url: string;
@@ -65,9 +79,180 @@ export interface LinkFollowSettings {
   blockedDomains: string[];
 }
 
+export interface ResearchSettings {
+  workerConcurrency: number;
+  maxRelatedSourcesPerTask: number;
+  subjectBatchSize: number;
+  maxUniqueSourcesPerJob: number;
+  cloudNoticeAccepted: boolean;
+}
+
+export type ResearchStage =
+  | 'seed-scan'
+  | 'expansion-planning'
+  | 'expansion'
+  | 'batch-synthesis'
+  | 'final-synthesis'
+  | 'completed';
+
+export type ResearchJobStatus =
+  'queued' | 'running' | 'paused' | 'completed' | 'cancelled' | 'failed';
+
+export type ResearchTaskStatus = 'queued' | 'running' | 'completed' | 'skipped' | 'failed';
+export type ResearchWorkerPhase =
+  'queued' | 'scoring' | 'opening' | 'reading' | 'analyzing' | 'completed' | 'skipped' | 'failed';
+
+export interface ResearchEvidence {
+  url: string;
+  title: string;
+  category: 'ticket' | 'epic' | 'business' | 'documentation' | 'code-review' | 'other';
+  excerpt: string;
+  depth: number;
+}
+
+export interface ResearchSeedAssessment {
+  summary: string;
+  relevance: number;
+  themes: string[];
+  evidenceGaps: string[];
+  expansionNeeded: boolean;
+}
+
+export interface ResearchSourceRecord {
+  key: string;
+  url: string;
+  title: string;
+  status: 'pending' | 'fetching' | 'success' | 'failed';
+  taskIds: string[];
+  evidence?: ResearchEvidence;
+  error?: string;
+  failureReason?: SourceFailureReason;
+  retries: number;
+  cacheHits: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ResearchExpansionItem {
+  taskId: string;
+  source: { url: string; title: string; depth: number; score: number };
+  priority: number;
+  status: 'planned' | 'completed' | 'skipped' | 'failed';
+  reason?: string;
+}
+
+export interface ResearchBatchSummary {
+  batchIndex: number;
+  kind: 'discovery' | 'final';
+  taskIds: string[];
+  summary: string;
+  createdAt: number;
+}
+
+export interface ResearchSourceDecision {
+  url: string;
+  title: string;
+  outcome: 'selected' | 'discarded' | 'skipped' | 'failed';
+  reason: string;
+  score?: number;
+  depth: number;
+  timestamp: number;
+}
+
+export interface ResearchTask {
+  id: string;
+  label: string;
+  sourceUrl: string;
+  title: string;
+  status: ResearchTaskStatus;
+  phase: ResearchWorkerPhase;
+  phaseStartedAt: number;
+  lastActivityAt: number;
+  currentSource?: { url: string; title: string; depth: number };
+  reasoning: ReasoningStep[];
+  linkVisits: LinkVisit[];
+  relatedSourcesRead: number;
+  relatedSourcesAttempted: number;
+  batchIndex?: number;
+  seedStatus?: 'queued' | 'running' | 'completed' | 'failed';
+  expansionStatus?: 'waiting' | 'planned' | 'running' | 'completed' | 'skipped';
+  seedAssessment?: ResearchSeedAssessment;
+  sourceKeys?: string[];
+  evidence: ResearchEvidence[];
+  decisions: ResearchSourceDecision[];
+  pendingSources: Array<{ url: string; title: string; depth: number; score?: number }>;
+  visitedUrls: string[];
+  report?: string;
+  error?: string;
+}
+
+export interface ResearchProgress {
+  jobId: string;
+  status: ResearchJobStatus;
+  activity: string;
+  totalTasks: number;
+  completedTasks: number;
+  failedTasks: number;
+  activeWorkers: number;
+  sourcesRead: number;
+  sourcesFailed: number;
+  updatedAt: number;
+  activeTaskIds: string[];
+  stage?: ResearchStage;
+  currentBatch?: number;
+  totalBatches?: number;
+  seedsScanned?: number;
+  subjectsExpanded?: number;
+  uniqueSourcesOpened?: number;
+  uniqueSourcesSucceeded?: number;
+  uniqueSourcesFailed?: number;
+  sourceCacheHits?: number;
+  sourceRetries?: number;
+  sourceBudgetUsed?: number;
+  sourceBudgetTotal?: number;
+  sourceBudgetOverflow?: number;
+}
+
+export interface ResearchJob {
+  id: string;
+  messageId: string;
+  question: string;
+  status: ResearchJobStatus;
+  tasks: ResearchTask[];
+  progress: ResearchProgress;
+  stage?: ResearchStage;
+  currentBatch?: number;
+  totalBatches?: number;
+  batchSummaries?: ResearchBatchSummary[];
+  expansionPlan?: ResearchExpansionItem[];
+  sourceRegistry?: ResearchSourceRecord[];
+  sourceBudget?: number;
+  sourceBudgetOverflow?: number;
+  synthesisState?: { level: number; summaries: string[] };
+  partialAnswer?: string;
+  finalAnswer?: string;
+  error?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ResearchConversationContext {
+  jobId: string;
+  originalQuestion: string;
+  status: ResearchJobStatus;
+  completedSubjects: number;
+  totalSubjects: number;
+  successfulSources: number;
+  failedSources: number;
+  summary: string;
+  partial: boolean;
+  error?: string;
+}
+
 export interface StorageSettings {
   model: ModelSettings;
   links: LinkFollowSettings;
+  research: ResearchSettings;
   ui: {
     theme: 'light' | 'dark' | 'system';
     showReasoning: boolean;
@@ -90,6 +275,8 @@ export interface ChatMessage {
   linkDecisions?: LinkDecision[];
   modelUsed?: 'local' | 'cloud';
   isStreaming?: boolean;
+  researchJobId?: string;
+  researchProgress?: ResearchProgress;
 }
 
 export interface ChatConversation {
@@ -123,7 +310,13 @@ export interface BackgroundMessage {
     | 'GET_SETTINGS'
     | 'UPDATE_SETTINGS'
     | 'PING'
-    | 'DOWNLOAD_MODEL';
+    | 'DOWNLOAD_MODEL'
+    | 'START_RESEARCH'
+    | 'PAUSE_RESEARCH'
+    | 'RESUME_RESEARCH'
+    | 'RETRY_RESEARCH'
+    | 'CANCEL_RESEARCH'
+    | 'GET_RESEARCH_JOB';
   tabId?: number;
   question?: string;
   context?: TabContent;
@@ -131,6 +324,7 @@ export interface BackgroundMessage {
   settings?: Partial<StorageSettings>;
   modelUrl?: string;
   messageId?: string;
+  jobId?: string;
 }
 
 export interface ContentScriptMessage {
@@ -140,7 +334,15 @@ export interface ContentScriptMessage {
 }
 
 export interface SidePanelMessage {
-  type: 'STREAM_CHUNK' | 'ERROR' | 'REASONING' | 'LINK_VISIT' | 'LINK_DECISION' | 'DONE';
+  type:
+    | 'STREAM_CHUNK'
+    | 'ERROR'
+    | 'REASONING'
+    | 'LINK_VISIT'
+    | 'LINK_DECISION'
+    | 'RESEARCH_PROGRESS'
+    | 'RESEARCH_TASK_UPDATE'
+    | 'DONE';
   chunk?: string;
   messageId?: string;
   reasoning?: ReasoningStep[];
@@ -148,6 +350,7 @@ export interface SidePanelMessage {
   linkDecision?: LinkDecision;
   done?: boolean;
   message?: string;
+  researchProgress?: ResearchProgress;
 }
 
 export type { StorageSettings as Settings };

@@ -120,6 +120,24 @@ describe('ModelRouter', () => {
       expect(result.text).toBe('Cloud response');
       expect(result.modelUsed).toBe('cloud');
     });
+
+    it('never falls back to cloud in local-only mode', async () => {
+      require('../api/local-client').isLocalModelReady.mockReturnValue(true);
+      require('../api/local-client').completeLocal.mockRejectedValue(new Error('Local failed'));
+      const { NIMClient } = require('../api/nim-client');
+      const cloudCompletion = jest.fn();
+      NIMClient.prototype.chatCompletion = cloudCompletion;
+      const localOnlyRouter = new ModelRouter(mockSettings, true);
+
+      await expect(
+        localOnlyRouter.complete(
+          'create report',
+          { hasLinks: true, contentLength: 10000 },
+          'prompt'
+        )
+      ).rejects.toThrow('local-only mode');
+      expect(cloudCompletion).not.toHaveBeenCalled();
+    });
   });
 
   describe('streamComplete', () => {

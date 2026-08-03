@@ -1,7 +1,10 @@
 import React, { useMemo } from 'react';
 import { marked } from 'marked';
-import type { ChatMessage } from '@/shared/types';
 import { AnswerDetails } from './AnswerDetails';
+import { handleAnswerLinkClick } from './message-links';
+import { ResearchJobPanel } from './ResearchJobPanel';
+import { StreamingProgress } from './StreamingProgress';
+import type { ChatMessage } from '@/shared/types';
 
 export function MessageItem({ message }: { message: ChatMessage }) {
   const isUser = message.role === 'user';
@@ -10,7 +13,6 @@ export function MessageItem({ message }: { message: ChatMessage }) {
     () => marked.parse(message.content || '', { async: false }) as string,
     [message.content]
   );
-
   const className = [
     'message',
     isUser ? 'message-user' : 'message-assistant',
@@ -22,14 +24,29 @@ export function MessageItem({ message }: { message: ChatMessage }) {
   return (
     <article className={className}>
       {!isUser && <AssistantMetadata message={message} />}
+      {message.researchProgress ? (
+        <ResearchJobPanel progress={message.researchProgress} />
+      ) : (
+        message.isStreaming && <StreamingProgress message={message} />
+      )}
+      {!isUser && (
+        <AnswerDetails
+          reasoning={message.reasoning}
+          links={message.linkVisits}
+          isStreaming={message.isStreaming}
+        />
+      )}
       <div className="message-body">
         {message.content ? (
-          <div className="message-content" dangerouslySetInnerHTML={{ __html: renderedContent }} />
+          <div
+            className="message-content"
+            dangerouslySetInnerHTML={{ __html: renderedContent }}
+            onClick={isUser ? undefined : handleAnswerLinkClick}
+          />
         ) : (
           <TypingIndicator />
         )}
       </div>
-      {!isUser && <AnswerDetails reasoning={message.reasoning} links={message.linkVisits} />}
     </article>
   );
 }

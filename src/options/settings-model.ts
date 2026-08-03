@@ -17,6 +17,13 @@ export interface ExtensionSettings {
     allowedDomains: string;
     blockedDomains: string;
   };
+  research: {
+    workerConcurrency: number;
+    maxRelatedSourcesPerTask: number;
+    subjectBatchSize: number;
+    maxUniqueSourcesPerJob: number;
+    cloudNoticeAccepted: boolean;
+  };
   ui: {
     theme: 'light' | 'dark' | 'system';
     showReasoning: boolean;
@@ -33,6 +40,7 @@ export type ModelSettings = ExtensionSettings['model'];
 export type LinkSettings = ExtensionSettings['links'];
 export type UiSettings = ExtensionSettings['ui'];
 export type PrivacySettings = ExtensionSettings['privacy'];
+export type ResearchSettings = ExtensionSettings['research'];
 
 export const DEFAULT_SETTINGS: ExtensionSettings = {
   model: {
@@ -52,6 +60,13 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
     requireConfirmation: false,
     allowedDomains: '',
     blockedDomains: 'facebook.com, twitter.com, x.com, instagram.com, tiktok.com, linkedin.com',
+  },
+  research: {
+    workerConcurrency: 3,
+    maxRelatedSourcesPerTask: 5,
+    subjectBatchSize: 25,
+    maxUniqueSourcesPerJob: 1000,
+    cloudNoticeAccepted: false,
   },
   ui: {
     theme: 'system',
@@ -73,6 +88,7 @@ export function mergeSettings(saved?: Partial<ExtensionSettings>): ExtensionSett
     ...saved,
     model: { ...DEFAULT_SETTINGS.model, ...saved.model },
     links: { ...DEFAULT_SETTINGS.links, ...saved.links },
+    research: { ...DEFAULT_SETTINGS.research, ...saved.research },
     ui: { ...DEFAULT_SETTINGS.ui, ...saved.ui },
     privacy: { ...DEFAULT_SETTINGS.privacy, ...saved.privacy },
   };

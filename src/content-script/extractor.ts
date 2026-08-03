@@ -27,7 +27,6 @@ const NOISE_SELECTORS = [
   '.ads',
   '.advertisement',
   '.sponsor',
-  '.comments',
   '.comment-form',
   '.social',
   '.share',

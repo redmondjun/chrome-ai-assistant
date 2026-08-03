@@ -2,24 +2,57 @@ import { getSettings, onSettingsChanged } from './storage/settings';
 import { ModelRouter, createRouter } from './api/router';
 import { analyzeWithReasoning, AnalysisCallbacks } from './pipeline/analyze';
 import { getTabContent } from './content/tab-content';
-import type { BackgroundMessage, TabContent, StorageSettings } from '@/shared/types';
+import { ResearchCoordinator, RESEARCH_RESUME_ALARM } from './research/coordinator';
+import { buildResearchConversationContext } from './research/context';
+import type { BackgroundMessage, ChatMessage, TabContent, StorageSettings } from '@/shared/types';
 
 let router: ModelRouter | null = null;
+let routerInitialization: Promise<ModelRouter> | null = null;
 let currentContent: TabContent | null = null;
 const activeAnalyses = new Map<string, AbortController>();
 
-async function init() {
-  const settings = await getSettings();
-  router = createRouter(settings.model);
-  await router.ensureLocalReady();
+function initializeRouter(): Promise<ModelRouter> {
+  if (router) return Promise.resolve(router);
+  if (routerInitialization) return routerInitialization;
+
+  routerInitialization = getSettings()
+    .then(settings => {
+      const initializedRouter = createRouter(settings.model, settings.privacy.localOnly);
+      router = initializedRouter;
+      void initializedRouter.ensureLocalReady().catch(error => {
+        console.error('[router]', 'Local model initialization failed:', error);
+      });
+      return initializedRouter;
+    })
+    .catch(error => {
+      console.error('[router]', 'Initialization failed:', error);
+      throw error;
+    })
+    .finally(() => {
+      routerInitialization = null;
+    });
+
+  return routerInitialization;
 }
 
-init();
+const researchCoordinator = new ResearchCoordinator(initializeRouter, getSettings);
+
+void initializeRouter().catch(() => undefined);
+void researchCoordinator.resumePendingJobs();
+
+chrome.alarms.onAlarm.addListener(alarm => {
+  if (alarm.name === RESEARCH_RESUME_ALARM) void researchCoordinator.resumePendingJobs();
+});
+
+chrome.runtime.onStartup.addListener(() => void researchCoordinator.resumePendingJobs());
 
 onSettingsChanged(async settings => {
-  if (router) {
-    router.updateSettings(settings.model);
-    await router.ensureLocalReady();
+  try {
+    const activeRouter = await initializeRouter();
+    activeRouter.updateSettings(settings.model, settings.privacy.localOnly);
+    await activeRouter.ensureLocalReady();
+  } catch (error) {
+    console.error('[router]', 'Could not apply updated settings:', error);
   }
 });
 
@@ -38,8 +71,8 @@ chrome.runtime.onMessage.addListener((message: BackgroundMessage, sender, sendRe
         }
 
         case 'ASK_QUESTION': {
-          if (!router) throw new Error('Router not initialized');
           if (!message.question) throw new Error('No question provided');
+          const activeRouter = await initializeRouter();
 
           let content = message.context || currentContent;
           if (!content) {
@@ -49,6 +82,7 @@ chrome.runtime.onMessage.addListener((message: BackgroundMessage, sender, sendRe
           }
 
           const settings = await getSettings();
+          const researchContext = await getConversationResearchContext(message.history);
           const messageId = message.messageId;
           if (!messageId) throw new Error('No message ID');
           const controller = new AbortController();
@@ -95,13 +129,14 @@ chrome.runtime.onMessage.addListener((message: BackgroundMessage, sender, sendRe
           };
 
           analyzeWithReasoning(
-            router,
+            activeRouter,
             content,
             message.question,
             settings,
             callbacks,
             message.history,
-            controller.signal
+            controller.signal,
+            researchContext
           )
             .catch(err => {
               if (controller.signal.aborted) {
@@ -127,6 +162,53 @@ chrome.runtime.onMessage.addListener((message: BackgroundMessage, sender, sendRe
             });
 
           sendResponse({ ok: true });
+          break;
+        }
+
+        case 'START_RESEARCH': {
+          if (!message.question || !message.messageId) throw new Error('Missing research request.');
+          let content = message.context || currentContent;
+          if (!content) {
+            const tabId = message.tabId || sender.tab?.id;
+            if (!tabId) throw new Error('No tab ID');
+            content = await getTabContent(tabId);
+          }
+          const job = await researchCoordinator.start(content, message.question, message.messageId);
+          sendResponse({ ok: true, jobId: job.id, progress: job.progress });
+          break;
+        }
+
+        case 'PAUSE_RESEARCH': {
+          if (!message.jobId) throw new Error('No research job ID.');
+          const job = await researchCoordinator.pause(message.jobId);
+          sendResponse({ ok: Boolean(job), progress: job?.progress });
+          break;
+        }
+
+        case 'RESUME_RESEARCH': {
+          if (!message.jobId) throw new Error('No research job ID.');
+          const job = await researchCoordinator.resume(message.jobId);
+          sendResponse({ ok: Boolean(job), progress: job?.progress });
+          break;
+        }
+
+        case 'CANCEL_RESEARCH': {
+          if (!message.jobId) throw new Error('No research job ID.');
+          const job = await researchCoordinator.cancel(message.jobId);
+          sendResponse({ ok: Boolean(job), progress: job?.progress });
+          break;
+        }
+
+        case 'RETRY_RESEARCH': {
+          if (!message.jobId) throw new Error('No research job ID.');
+          const job = await researchCoordinator.retry(message.jobId);
+          sendResponse({ ok: Boolean(job), progress: job?.progress });
+          break;
+        }
+
+        case 'GET_RESEARCH_JOB': {
+          if (!message.jobId) throw new Error('No research job ID.');
+          sendResponse({ job: await researchCoordinator.getJob(message.jobId) });
           break;
         }
 
@@ -164,7 +246,7 @@ chrome.runtime.onMessage.addListener((message: BackgroundMessage, sender, sendRe
           sendResponse({ error: 'Unknown message type' });
       }
     } catch (error) {
-      sendResponse({ error: String(error) });
+      sendResponse({ error: error instanceof Error ? error.message : String(error) });
     }
   })();
   return true;
@@ -174,6 +256,13 @@ async function saveSettings(settings: Partial<StorageSettings>): Promise<void> {
   const current = await getSettings();
   const merged = deepMerge(current, settings);
   await chrome.storage.sync.set({ 'chrome-ai-settings': merged });
+}
+
+async function getConversationResearchContext(history: ChatMessage[] = []) {
+  const jobId = [...history].reverse().find(message => message.researchJobId)?.researchJobId;
+  if (!jobId) return undefined;
+  const job = await researchCoordinator.getJob(jobId);
+  return job ? buildResearchConversationContext(job) : undefined;
 }
 
 function deepMerge(target: any, source: any): any {

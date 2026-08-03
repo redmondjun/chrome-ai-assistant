@@ -1,6 +1,8 @@
 import { ModelRouter } from '../api/router';
 import { shouldFollowLinks as modelShouldFollowLinks } from '../content/classifier';
 import { fetchLinkContentInTab } from '../content/link-tab-fetcher';
+import { validateRetrievedPage } from '../content/retrieved-page';
+import { evaluateLinkSafety } from '@/shared/link-safety';
 import type {
   TabContent,
   ReasoningStep,
@@ -10,7 +12,13 @@ import type {
   ChatMessage,
   LinkInfo,
   LinkDecision,
+  ResearchConversationContext,
 } from '@/shared/types';
+
+const LINK_SCORING_BATCH_SIZE = 10;
+const LINK_SCORING_SLOW_MS = 15000;
+const LINK_SCORING_TIMEOUT_MS = 60000;
+const LINK_CONTEXT_LIMIT = 240;
 
 export interface AnalysisCallbacks {
   onChunk: (chunk: string) => void;
@@ -30,11 +38,19 @@ export async function analyzeWithReasoning(
   },
   callbacks: AnalysisCallbacks,
   history: ChatMessage[] = [],
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  researchContext?: ResearchConversationContext
 ): Promise<void> {
   const startedAt = Date.now();
   const logStage = (stage: string, details: object = {}) =>
     console.info('[analysis]', stage, { elapsedMs: Date.now() - startedAt, ...details });
+  const reportScoringProgress = (thought: string) =>
+    callbacks.onReasoning?.({
+      step: 2,
+      type: 'classify',
+      thought,
+      timestamp: Date.now(),
+    });
   logStage('started', { linkCount: content.links.length });
   signal?.throwIfAborted();
   callbacks.onReasoning?.({
@@ -51,7 +67,9 @@ export async function analyzeWithReasoning(
       thought: 'Reporting recorded link-visit results from this conversation.',
       timestamp: Date.now(),
     });
-    callbacks.onChunk(buildLinkVisitStatus(history));
+    callbacks.onChunk(
+      researchContext ? buildResearchVisitStatus(researchContext) : buildLinkVisitStatus(history)
+    );
     callbacks.onDone?.();
     return;
   }
@@ -75,6 +93,10 @@ export async function analyzeWithReasoning(
 
   if (shouldFollow && content.links.length > 0) {
     const availableLinks = content.links.filter(link => {
+      if (!evaluateLinkSafety(link).safe) {
+        emitLinkDecision(callbacks, link, 1, 'discarded', 'blocked-unsafe-action');
+        return false;
+      }
       if (isBlockedDomain(link.url, settings.links.blockedDomains)) {
         emitLinkDecision(callbacks, link, 1, 'discarded', 'blocked-domain');
         return false;
@@ -89,8 +111,21 @@ export async function analyzeWithReasoning(
       `${content.text}\n${availableLinks.map(link => `${link.text} ${link.url}`).join('\n')}`
     );
 
+    callbacks.onReasoning?.({
+      step: 2,
+      type: 'classify',
+      thought: `Scoring ${availableLinks.length} candidate links for relevance to your request...`,
+      timestamp: Date.now(),
+    });
+
     // Classify links for relevance
-    const linkScores = await classifyLinks(router, availableLinks, question, signal);
+    const linkScores = await classifyLinks(
+      router,
+      availableLinks,
+      question,
+      signal,
+      reportScoringProgress
+    );
 
     const scoredLinks = availableLinks.map((link, i) => ({ link, score: linkScores[i] }));
     const allRelevantLinks = explicitlyRequestsAllLinks(question)
@@ -129,6 +164,12 @@ export async function analyzeWithReasoning(
       const { link, score, depth } = queue.shift()!;
       attemptedPages++;
       deepestAttempted = Math.max(deepestAttempted, depth);
+      callbacks.onReasoning?.({
+        step: 2,
+        type: 'fetch',
+        thought: `Opening depth ${depth} source ${attemptedPages}: ${link.text || link.url}`,
+        timestamp: Date.now(),
+      });
       callbacks.onLinkVisit?.({
         url: link.url,
         title: link.text,
@@ -141,32 +182,51 @@ export async function analyzeWithReasoning(
       try {
         let fetched = await fetchLinkContent(link.url, signal);
         let failure = '';
+        let failureReason: LinkVisit['failureReason'];
         let method: LinkVisit['method'] = 'direct-fetch';
         let discoveredLinks: LinkInfo[] = [];
         let fetchedTitle = link.text;
         if (!fetched) {
+          callbacks.onReasoning?.({
+            step: 2,
+            type: 'fetch',
+            thought: `Direct retrieval returned no readable content for ${link.text || link.url}; trying an authenticated browser tab...`,
+            timestamp: Date.now(),
+          });
           const tabResult = await fetchLinkContentInTab(link.url, signal);
           fetched = tabResult.content || null;
           failure = tabResult.error || '';
+          failureReason = tabResult.failureReason;
           discoveredLinks = tabResult.links || [];
           fetchedTitle = tabResult.title || fetchedTitle;
           method = 'browser-tab';
         }
         if (fetched) {
-          const invalidReason = getInvalidPageReason(fetched, fetchedTitle);
-          if (invalidReason) {
+          const validation = validateRetrievedPage({
+            content: fetched,
+            title: fetchedTitle,
+            url: link.url,
+          });
+          if (!validation.valid) {
             const visit: LinkVisit = {
               url: link.url,
               title: link.text,
               relevanceScore: score,
               status: 'failed',
               timestamp: Date.now(),
-              error: invalidReason,
+              error: validation.message,
+              failureReason: validation.reason,
               method,
               depth,
             };
             currentVisits.push(visit);
             callbacks.onLinkVisit?.(visit);
+            callbacks.onReasoning?.({
+              step: 2,
+              type: 'extract',
+              thought: `Could not use ${link.text || link.url}: ${validation.message}`,
+              timestamp: Date.now(),
+            });
             emitLinkDecision(callbacks, link, depth, 'discarded', 'invalid-page-content', score);
             continue;
           }
@@ -185,9 +245,19 @@ export async function analyzeWithReasoning(
           };
           currentVisits.push(visit);
           callbacks.onLinkVisit?.(visit);
+          callbacks.onReasoning?.({
+            step: 2,
+            type: 'extract',
+            thought: `Read ${link.text || link.url} using ${method}.`,
+            timestamp: Date.now(),
+          });
 
           if (depth < settings.links.maxDepth && discoveredLinks.length > 0) {
             const childCandidates = discoveredLinks.filter(child => {
+              if (!evaluateLinkSafety(child).safe) {
+                emitLinkDecision(callbacks, child, depth + 1, 'discarded', 'blocked-unsafe-action');
+                return false;
+              }
               if (isBlockedDomain(child.url, settings.links.blockedDomains)) {
                 emitLinkDecision(callbacks, child, depth + 1, 'discarded', 'blocked-domain');
                 return false;
@@ -214,7 +284,21 @@ export async function analyzeWithReasoning(
                   'child-classification-limit'
                 )
               );
-            const childScores = await classifyLinks(router, childLinks, question, signal);
+            if (childLinks.length > 0) {
+              callbacks.onReasoning?.({
+                step: 2,
+                type: 'classify',
+                thought: `Scoring ${childLinks.length} links discovered in ${link.text || link.url}...`,
+                timestamp: Date.now(),
+              });
+            }
+            const childScores = await classifyLinks(
+              router,
+              childLinks,
+              question,
+              signal,
+              reportScoringProgress
+            );
             const relevantChildren = childLinks
               .map((child, index) => ({ link: child, score: childScores[index], depth: depth + 1 }))
               .filter(child => {
@@ -252,9 +336,16 @@ export async function analyzeWithReasoning(
             error:
               failure ||
               'No readable content returned. Sign in to the source and connect to the company network.',
+            failureReason: failureReason || 'retrieval-failed',
           };
           currentVisits.push(visit);
           callbacks.onLinkVisit?.(visit);
+          callbacks.onReasoning?.({
+            step: 2,
+            type: 'extract',
+            thought: `Could not read ${link.text || link.url}: ${visit.error}`,
+            timestamp: Date.now(),
+          });
         }
       } catch (error) {
         const visit: LinkVisit = {
@@ -268,6 +359,12 @@ export async function analyzeWithReasoning(
         };
         currentVisits.push(visit);
         callbacks.onLinkVisit?.(visit);
+        callbacks.onReasoning?.({
+          step: 2,
+          type: 'extract',
+          thought: `Could not read ${link.text || link.url}: ${visit.error}`,
+          timestamp: Date.now(),
+        });
       }
 
       if (queue.length > 0 && settings.links.rateLimitMs > 0) {
@@ -300,22 +397,34 @@ export async function analyzeWithReasoning(
     callbacks.onReasoning?.({
       step: 2,
       type: 'synthesize',
-      thought: 'This question does not require following links. Using the current page.',
+      thought: researchContext
+        ? 'This question does not require new link retrieval. Using the current page and persisted Deep Research findings.'
+        : 'This question does not require following links. Using the current page.',
       timestamp: Date.now(),
     });
   }
 
   // Generate final answer
-  const prompt = buildPrompt(context, question, content.url, content.title, history, currentVisits);
+  const prompt = buildPrompt(
+    context,
+    question,
+    content.url,
+    content.title,
+    history,
+    currentVisits,
+    researchContext
+  );
   signal?.throwIfAborted();
   logStage('generation-started', { retrievedPages: currentVisits.length });
 
   for await (const result of router.streamComplete(
     question,
     {
-      hasLinks: shouldFollow,
+      hasLinks: shouldFollow || Boolean(researchContext),
       contentLength:
-        context.length + history.reduce((length, message) => length + message.content.length, 0),
+        context.length +
+        history.reduce((length, message) => length + message.content.length, 0) +
+        (researchContext?.summary.length || 0),
     },
     prompt,
     { temperature: 0.7, maxTokens: 4096, signal }
@@ -356,27 +465,94 @@ function emitLinkDecision(
 }
 
 async function classifyLinks(
-  router: ModelRouter,
+  router: Pick<ModelRouter, 'complete'>,
   links: TabContent['links'],
   question: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onProgress?: (message: string) => void,
+  batchConcurrency = 1
 ): Promise<number[]> {
   if (links.length === 0) return [];
 
+  const starts = Array.from(
+    { length: Math.ceil(links.length / LINK_SCORING_BATCH_SIZE) },
+    (_, index) => index * LINK_SCORING_BATCH_SIZE
+  );
+  const results: number[][] = Array.from({ length: starts.length });
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < starts.length) {
+      if (signal?.aborted) throw signal.reason;
+      const batchIndex = cursor++;
+      const start = starts[batchIndex];
+      const batch = links.slice(start, start + LINK_SCORING_BATCH_SIZE);
+      const batchLabel = `${start + 1}-${start + batch.length} of ${links.length}`;
+      onProgress?.(`Scoring links ${batchLabel}...`);
+      results[batchIndex] = await classifyLinkBatch(
+        router,
+        batch,
+        question,
+        batchLabel,
+        signal,
+        onProgress
+      );
+      onProgress?.(`Finished scoring links ${batchLabel}.`);
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(Math.max(1, batchConcurrency), starts.length) }, worker)
+  );
+  return results.flat();
+}
+
+async function classifyLinkBatch(
+  router: Pick<ModelRouter, 'complete'>,
+  links: TabContent['links'],
+  question: string,
+  batchLabel: string,
+  signal?: AbortSignal,
+  onProgress?: (message: string) => void
+): Promise<number[]> {
   const prompt = `Score each link 0-1 for relevance to: "${question}"
 
 Links:
-${links.map((l, i) => `${i + 1}. ${l.text} - ${l.url} - Context: ${l.context || 'none'}`).join('\n')}
+${links.map((l, i) => `${i + 1}. ${l.text.slice(0, LINK_CONTEXT_LIMIT)} - ${l.url} - Context: ${(l.context || 'none').slice(0, LINK_CONTEXT_LIMIT)}`).join('\n')}
 
 Navigation, account, authentication, legal, create/edit, and site-management links are irrelevant.
 Return only JSON array: [0.9, 0.1, ...]`;
 
+  const scoringController = new AbortController();
+  const abortScoring = () => scoringController.abort(signal?.reason);
+  signal?.addEventListener('abort', abortScoring, { once: true });
+  if (signal?.aborted) abortScoring();
+  const timeoutError = new DOMException(
+    `Link scoring batch timed out after ${LINK_SCORING_TIMEOUT_MS / 1000} seconds.`,
+    'TimeoutError'
+  );
+  const slowId = setTimeout(
+    () =>
+      onProgress?.(
+        `Still scoring links ${batchLabel}; the model is responding slowly, so this batch is still running.`
+      ),
+    LINK_SCORING_SLOW_MS
+  );
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      scoringController.abort(timeoutError);
+      reject(timeoutError);
+    }, LINK_SCORING_TIMEOUT_MS);
+  });
+
   try {
-    const result = await router.complete(question, { hasLinks: true, contentLength: 0 }, prompt, {
-      temperature: 0.1,
-      maxTokens: 256,
-      signal,
-    });
+    const result = await Promise.race([
+      router.complete(question, { hasLinks: true, contentLength: 0 }, prompt, {
+        temperature: 0.1,
+        maxTokens: 256,
+        signal: scoringController.signal,
+      }),
+      timeout,
+    ]);
     const text = typeof result === 'string' ? result : result.text;
 
     const match = text.match(/\[[\d.,\s]+\]/);
@@ -386,23 +562,44 @@ Return only JSON array: [0.9, 0.1, ...]`;
         console.info('[research]', 'relevance-scoring', {
           method: 'model',
           linkCount: links.length,
+          batch: batchLabel,
           uniform: links.length > 1 && scores.every((score: number) => score === scores[0]),
         });
         return scores;
       }
     }
   } catch (error) {
+    if (signal?.aborted) throw error;
+    const reason =
+      error instanceof DOMException && error.name === 'TimeoutError'
+        ? `timed out after ${LINK_SCORING_TIMEOUT_MS / 1000} seconds`
+        : error instanceof Error
+          ? error.message
+          : String(error);
     console.warn('[research]', 'relevance-scoring-fallback', {
-      reason: error instanceof Error ? error.message : String(error),
+      reason,
       linkCount: links.length,
+      batch: batchLabel,
     });
+    onProgress?.(
+      `AI scoring for links ${batchLabel} did not finish (${reason}). Using local relevance matching for this batch.`
+    );
     return scoreLinksByKeywords(links, question);
+  } finally {
+    clearTimeout(slowId);
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
+    signal?.removeEventListener('abort', abortScoring);
   }
 
+  const reason = 'The model response did not contain one score per link.';
   console.warn('[research]', 'relevance-scoring-fallback', {
-    reason: 'The model response did not contain one score per link.',
+    reason,
     linkCount: links.length,
+    batch: batchLabel,
   });
+  onProgress?.(
+    `AI scoring for links ${batchLabel} returned an invalid result. Using local relevance matching for this batch.`
+  );
   return scoreLinksByKeywords(links, question);
 }
 
@@ -413,18 +610,6 @@ function scoreLinksByKeywords(links: TabContent['links'], question: string): num
     if (terms.some(term => haystack.includes(term))) return 0.9;
     return /\/(?:pull-requests|browse|issues|display)\b/i.test(link.url) ? 0.6 : 0.1;
   });
-}
-
-function getInvalidPageReason(content: string, title: string): string | undefined {
-  const sample = `${title}\n${content.slice(0, 2000)}`;
-  if (/\bHTTP Status 4\d\d\b/i.test(sample)) return 'The source returned an HTTP error page.';
-  if (/\b(?:Page Not Found|The page doesn['’]t exist|We can['’]t find that page)\b/i.test(sample)) {
-    return 'The source returned a page-not-found response.';
-  }
-  if (/\b(?:Access Denied|You do not have permission to view this page)\b/i.test(sample)) {
-    return 'The source returned an access-denied page.';
-  }
-  return undefined;
 }
 
 function isRelevantChildLink(
@@ -532,6 +717,11 @@ function delay(milliseconds: number, signal?: AbortSignal): Promise<void> {
 }
 
 async function fetchLinkContent(url: string, signal?: AbortSignal): Promise<string | null> {
+  const safety = evaluateLinkSafety({ url });
+  if (!safety.safe) {
+    console.warn('[research]', 'blocked-unsafe-action', { url, reason: safety.reason });
+    return null;
+  }
   const requestSignal = createTimedSignal(signal, 10000);
   try {
     const requestOptions: RequestInit = {
@@ -601,7 +791,8 @@ function buildPrompt(
   url: string,
   title: string,
   history: ChatMessage[],
-  currentVisits: LinkVisit[]
+  currentVisits: LinkVisit[],
+  researchContext?: ResearchConversationContext
 ): string {
   const conversation = history
     .filter(message => !message.isStreaming && message.content)
@@ -614,15 +805,40 @@ function buildPrompt(
   const sourceStatus = formatSourceStatus(
     currentVisits.length > 0 ? currentVisits : getLatestVisits(history)
   );
+  const persistedResearch = researchContext
+    ? `Persisted Deep Research results:
+${formatResearchContext(researchContext)}
+
+`
+    : '';
 
   return `Source: ${title} (${url})
 
 Content:
 ${context.slice(0, 50000)}
 
-${sourceStatus ? `Source retrieval results:\n${sourceStatus}\n\n` : ''}${conversation ? `Conversation so far:\n${conversation}\n\n` : ''}Current question: ${question}
+${sourceStatus ? `Source retrieval results:\n${sourceStatus}\n\n` : ''}${persistedResearch}${conversation ? `Conversation so far:\n${conversation}\n\n` : ''}Current question: ${question}
 
-Answer the current question directly. The current question has priority over previous requests and answers. Do not repeat or regenerate a previous summary unless the current question explicitly requests it. Use the source retrieval results as the truth about which links were visited. Cite successfully retrieved sources when possible.`;
+Answer the current question directly. The current question has priority over previous requests and answers. Do not repeat or regenerate a previous summary unless the current question explicitly requests it. Do not recommend exporting to Word, PDF, or another format unless the current question explicitly requests an export. Use the source retrieval and persisted research results as the truth about which links were visited. A failed research job may still contain valid partial findings; do not claim that nothing was read when its successful-source count is greater than zero. Cite successfully retrieved sources when possible.`;
+}
+
+function formatResearchContext(context: ResearchConversationContext): string {
+  return `Research job: ${context.jobId}
+Status: ${context.status}${context.partial ? ' (partial findings available)' : ''}
+Original request: ${context.originalQuestion}
+Completed subjects: ${context.completedSubjects}/${context.totalSubjects}
+Validated readable sources: ${context.successfulSources}
+Failed or inaccessible sources: ${context.failedSources}
+${context.error ? `Research error: ${context.error}\n` : ''}Compact findings:
+${context.summary}`;
+}
+
+function buildResearchVisitStatus(context: ResearchConversationContext): string {
+  const completion =
+    context.failedSources === 0
+      ? `All ${context.successfulSources} recorded research sources were retrieved successfully.`
+      : `${context.successfulSources} research sources were retrieved successfully and ${context.failedSources} failed or were inaccessible.`;
+  return `${completion} The research job is ${context.status}${context.partial ? ' and has partial findings available' : ''}.`;
 }
 
 function explicitlyRequestsLinkRetrieval(question: string): boolean {
