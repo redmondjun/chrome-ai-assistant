@@ -154,6 +154,27 @@ summary:focus-visible {
   color: var(--text);
   font-size: 12px;
 }
+
+.account-button {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.account-button.sync-error {
+  border-color: var(--danger);
+}
+
+.account-button.sync-syncing {
+  border-color: var(--accent);
+}
 .new-chat-button {
   height: 30px;
   padding: 0 9px;

@@ -1,8 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { ChatConversation, ChatMessage, TabContent } from '@/shared/types';
+import {
+  ACCOUNT_STATE_KEY,
+  ANONYMOUS_SCOPE,
+  activeConversationKey,
+  conversationKey,
+} from '@/shared/storage';
 
-const CHAT_CONVERSATIONS_KEY = 'chrome-ai-conversations';
-const ACTIVE_CONVERSATION_KEY = 'chrome-ai-active-conversation';
+const LEGACY_CONVERSATIONS_KEY = 'chrome-ai-conversations';
+const LEGACY_ACTIVE_KEY = 'chrome-ai-active-conversation';
 const LEGACY_CHAT_HISTORY_PREFIX = 'chrome-ai-chat-history:';
 const MAX_STORED_MESSAGES = 100;
 
@@ -13,37 +19,82 @@ export function useChat(page: TabContent | null) {
   const [isLoading, setIsLoading] = useState(false);
   const [activeMessageId, setActiveMessageId] = useState<string>();
   const [isHistoryLoaded, setIsHistoryLoaded] = useState(false);
+  const [scope, setScope] = useState(ANONYMOUS_SCOPE);
   const activeConversation = conversations.find(chat => chat.id === activeConversationId);
   const messages = activeConversation?.messages || [];
 
   useEffect(() => {
     let active = true;
-    void chrome.storage.local.get(null).then(result => {
+    void chrome.storage.local.get(ACCOUNT_STATE_KEY).then(result => {
       if (!active) return;
-      const saved = result[CHAT_CONVERSATIONS_KEY];
-      const chats = Array.isArray(saved) ? saved : restoreLegacyConversations(result);
-      const selected = chats.find(chat => chat.id === result[ACTIVE_CONVERSATION_KEY]) || chats[0];
-      const initial = selected || createConversation();
-      setConversations(selected ? chats : [initial]);
-      setActiveConversationId(initial.id);
-      setIsHistoryLoaded(true);
+      setScope(result[ACCOUNT_STATE_KEY]?.user?.id || ANONYMOUS_SCOPE);
     });
-
     return () => {
       active = false;
     };
   }, []);
 
   useEffect(() => {
+    let active = true;
+    setIsHistoryLoaded(false);
+    void chrome.storage.local.get(null).then(async result => {
+      if (!active) return;
+      const scopedKey = conversationKey(scope);
+      const activeKey = activeConversationKey(scope);
+      const saved =
+        result[scopedKey] ??
+        (scope === ANONYMOUS_SCOPE ? result[LEGACY_CONVERSATIONS_KEY] : undefined);
+      const chats = Array.isArray(saved) ? saved : restoreLegacyConversations(result);
+      const selectedId =
+        result[activeKey] ?? (scope === ANONYMOUS_SCOPE ? result[LEGACY_ACTIVE_KEY] : undefined);
+      const selected = chats.find(chat => chat.id === selectedId) || chats[0];
+      const initial = selected || createConversation();
+      setConversations(selected ? chats : [initial]);
+      setActiveConversationId(initial.id);
+      setIsHistoryLoaded(true);
+      if (scope === ANONYMOUS_SCOPE && result[LEGACY_CONVERSATIONS_KEY] && !result[scopedKey]) {
+        await chrome.storage.local.set({ [scopedKey]: chats, [activeKey]: initial.id });
+        await chrome.storage.local.remove([LEGACY_CONVERSATIONS_KEY, LEGACY_ACTIVE_KEY]);
+      }
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [scope]);
+
+  useEffect(() => {
     if (!isHistoryLoaded) return;
     void chrome.storage.local.set({
-      [CHAT_CONVERSATIONS_KEY]: conversations.map(chat => ({
+      [conversationKey(scope)]: conversations.map(chat => ({
         ...chat,
         messages: chat.messages.filter(message => !message.isStreaming).slice(-MAX_STORED_MESSAGES),
       })),
-      [ACTIVE_CONVERSATION_KEY]: activeConversationId,
+      [activeConversationKey(scope)]: activeConversationId,
     });
-  }, [activeConversationId, conversations, isHistoryLoaded]);
+  }, [activeConversationId, conversations, isHistoryLoaded, scope]);
+
+  useEffect(() => {
+    if (!isHistoryLoaded || scope === ANONYMOUS_SCOPE) return;
+    const timeout = window.setTimeout(() => {
+      void chrome.runtime.sendMessage({
+        type: 'SYNC_PUSH_CONVERSATIONS',
+        conversations,
+      });
+    }, 800);
+    return () => window.clearTimeout(timeout);
+  }, [conversations, isHistoryLoaded, scope]);
+
+  useEffect(() => {
+    if (scope === ANONYMOUS_SCOPE) return;
+    const pull = async () => {
+      const response = await chrome.runtime.sendMessage({ type: 'SYNC_PULL' });
+      if (Array.isArray(response?.conversations)) setConversations(response.conversations);
+    };
+    void pull();
+    const interval = window.setInterval(() => void pull(), 30_000);
+    return () => window.clearInterval(interval);
+  }, [scope]);
 
   const updateMessage = useCallback(
     (messageId: string, update: (message: ChatMessage) => ChatMessage) => {
@@ -80,6 +131,14 @@ export function useChat(page: TabContent | null) {
   useEffect(() => {
     const handleMessage = (message: any) => {
       switch (message.type) {
+        case 'ACCOUNT_STATE_CHANGED':
+          setScope(message.account?.user?.id || ANONYMOUS_SCOPE);
+          break;
+        case 'SYNC_DATA_CHANGED':
+          if (message.scope === scope && Array.isArray(message.conversations)) {
+            setConversations(message.conversations);
+          }
+          break;
         case 'STREAM_CHUNK':
           updateMessage(message.messageId, current => ({
             ...current,
@@ -121,7 +180,7 @@ export function useChat(page: TabContent | null) {
 
     chrome.runtime.onMessage.addListener(handleMessage);
     return () => chrome.runtime.onMessage.removeListener(handleMessage);
-  }, [finishMessage, updateMessage]);
+  }, [finishMessage, scope, updateMessage]);
 
   const send = useCallback(
     async (prompt?: string) => {

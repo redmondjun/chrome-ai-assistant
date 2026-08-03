@@ -1,6 +1,12 @@
 import React from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
 jest.mock('marked', () => ({ marked: { parse: (value: string) => `<p>${value}</p>` } }));
+jest.mock('@/shared/useAccount', () => ({
+  useAccount: () => ({
+    account: { configured: false, user: null },
+    syncStatus: { state: 'idle' },
+  }),
+}));
 import { AnswerDetails } from './AnswerDetails';
 import { Composer } from './Composer';
 import { Conversation } from './Conversation';

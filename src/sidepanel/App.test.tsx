@@ -84,12 +84,23 @@ describe('side panel App', () => {
     (chrome.storage.local.set as jest.Mock).mockResolvedValue(undefined);
     (chrome.runtime.sendMessage as jest.Mock).mockImplementation(async message => {
       if (message.type === 'GET_TAB_CONTENT') return { type: 'TAB_CONTENT', content: page };
+      if (message.type === 'GET_SETTINGS') return { settings: savedSettings };
+      if (message.type === 'AUTH_GET_STATE') {
+        return { account: { configured: false, user: null } };
+      }
       return { ok: true };
     });
   });
 
   it('shows API-key onboarding when neither cloud nor local AI is configured', async () => {
-    (chrome.storage.sync.get as jest.Mock).mockResolvedValue({});
+    (chrome.runtime.sendMessage as jest.Mock).mockImplementation(async message => {
+      if (message.type === 'GET_SETTINGS') return { settings: {} };
+      if (message.type === 'GET_TAB_CONTENT') return { type: 'TAB_CONTENT', content: page };
+      if (message.type === 'AUTH_GET_STATE') {
+        return { account: { configured: false, user: null } };
+      }
+      return { ok: true };
+    });
 
     render(<App />);
 
@@ -151,7 +162,7 @@ describe('side panel App', () => {
     await waitFor(() =>
       expect(chrome.storage.local.set).toHaveBeenCalledWith(
         expect.objectContaining({
-          'chrome-ai-conversations': expect.arrayContaining([
+          'chrome-ai-conversations:anonymous': expect.arrayContaining([
             expect.objectContaining({
               messages: expect.arrayContaining([
                 expect.objectContaining({ role: 'user', content: 'What is this about?' }),
@@ -213,9 +224,20 @@ describe('side panel App', () => {
   });
 
   it('shows a readable page error and retries successfully', async () => {
-    (chrome.runtime.sendMessage as jest.Mock)
-      .mockResolvedValueOnce({ error: 'Chrome does not allow extensions to read this page.' })
-      .mockResolvedValueOnce({ type: 'TAB_CONTENT', content: page });
+    let tabRequest = 0;
+    (chrome.runtime.sendMessage as jest.Mock).mockImplementation(async message => {
+      if (message.type === 'GET_SETTINGS') return { settings: savedSettings };
+      if (message.type === 'AUTH_GET_STATE') {
+        return { account: { configured: false, user: null } };
+      }
+      if (message.type === 'GET_TAB_CONTENT') {
+        tabRequest += 1;
+        return tabRequest === 1
+          ? { error: 'Chrome does not allow extensions to read this page.' }
+          : { type: 'TAB_CONTENT', content: page };
+      }
+      return { ok: true };
+    });
 
     render(<App />);
 

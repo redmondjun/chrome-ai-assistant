@@ -20,8 +20,8 @@ export function useSidepanelSettings() {
 
   useEffect(() => {
     void (async () => {
-      const result = await chrome.storage.sync.get('chrome-ai-settings');
-      const saved = result['chrome-ai-settings'] as Partial<StorageSettings> | undefined;
+      const result = await chrome.runtime.sendMessage({ type: 'GET_SETTINGS' });
+      const saved = result?.settings as Partial<StorageSettings> | undefined;
       const nextModel = { ...DEFAULT_MODEL, ...saved?.model };
 
       setModel(nextModel);
