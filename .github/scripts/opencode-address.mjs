@@ -3,6 +3,8 @@ import { appendFileSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } fr
 import { fileURLToPath } from 'node:url';
 
 const TRUSTED_ASSOCIATIONS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
+const REVIEW_MODEL = 'nvidia/nvidia/nemotron-3-super-120b-a12b';
+const MAX_RECONCILIATION_ROUNDS = 3;
 const MODELS = {
   default: 'nvidia/deepseek-ai/deepseek-v4-pro',
   ultra: 'nvidia/nvidia/nemotron-3-ultra-550b-a55b',
@@ -93,7 +95,7 @@ export function validateAgentResponse(value, targetIds) {
   return value;
 }
 
-export function extractAgentResponse(stdout, targetIds) {
+function extractJsonCandidates(stdout) {
   const text = stdout
     .split('\n')
     .filter(Boolean)
@@ -111,7 +113,7 @@ export function extractAgentResponse(stdout, targetIds) {
     .trim()
     .replace(/^```json\s*/i, '')
     .replace(/\s*```$/, '');
-  if (!text) throw new Error('OpenCode did not return a JSON response');
+  if (!text) return [];
 
   const candidates = [];
   let start = -1;
@@ -136,7 +138,11 @@ export function extractAgentResponse(stdout, targetIds) {
     }
   }
 
-  for (const candidate of candidates.reverse()) {
+  return candidates.reverse();
+}
+
+export function extractAgentResponse(stdout, targetIds) {
+  for (const candidate of extractJsonCandidates(stdout)) {
     try {
       return validateAgentResponse(JSON.parse(candidate), targetIds);
     } catch {
@@ -144,6 +150,34 @@ export function extractAgentResponse(stdout, targetIds) {
     }
   }
   throw new Error('OpenCode did not return a valid structured response');
+}
+
+export function validateAdjudicationResponse(value, commentId) {
+  if (Number(value?.comment_id) !== Number(commentId)) {
+    throw new Error('Reviewer returned an unexpected comment ID');
+  }
+  if (!['accept', 'maintain'].includes(value.decision)) {
+    throw new Error('Reviewer decision must be accept or maintain');
+  }
+  if (typeof value.reply !== 'string' || !value.reply.trim()) {
+    throw new Error('Reviewer adjudication must include a reply');
+  }
+  return value;
+}
+
+export function extractAdjudicationResponse(stdout, commentId) {
+  for (const candidate of extractJsonCandidates(stdout)) {
+    try {
+      return validateAdjudicationResponse(JSON.parse(candidate), commentId);
+    } catch {
+      // Continue until a schema-valid adjudication is found.
+    }
+  }
+  throw new Error('OpenCode reviewer did not return a valid adjudication');
+}
+
+export function isAutomatedFeedback(target) {
+  return target.comments?.[0]?.author === 'opencode-agent[bot]';
 }
 
 function run(command, args, options = {}) {
@@ -344,6 +378,49 @@ function runOpenCode(model, prompt, targetIds) {
   }
 }
 
+function runReviewAdjudication(prompt, commentId) {
+  const childEnv = { ...process.env };
+  delete childEnv.GITHUB_TOKEN;
+  delete childEnv.GH_TOKEN;
+  delete childEnv.ACTIONS_ID_TOKEN_REQUEST_TOKEN;
+  delete childEnv.ACTIONS_ID_TOKEN_REQUEST_URL;
+  const promptFile = '.opencode-adjudication-prompt.md';
+  writeFileSync(promptFile, prompt, { mode: 0o600 });
+  try {
+    const result = spawnSync(
+      'opencode',
+      [
+        'run',
+        `Reassess the disagreement for comment ${commentId}. Return ONLY JSON: {"comment_id":${commentId},"decision":"accept|maintain","reply":"concise reasoning"}`,
+        '--auto',
+        '--format',
+        'json',
+        '--agent',
+        'pr-disagreement-reviewer',
+        '--model',
+        REVIEW_MODEL,
+        '--file',
+        promptFile,
+      ],
+      {
+        encoding: 'utf8',
+        env: childEnv,
+        maxBuffer: 20 * 1024 * 1024,
+        timeout: 15 * 60 * 1000,
+      }
+    );
+    if (result.error) throw result.error;
+    if (result.status !== 0) {
+      throw new Error(
+        `OpenCode reviewer failed: ${result.stderr || result.stdout || `exit ${result.status}`}`
+      );
+    }
+    return extractAdjudicationResponse(result.stdout, commentId);
+  } finally {
+    unlinkSync(promptFile);
+  }
+}
+
 async function findChildPr(token, owner, repo, pr) {
   if (isOpenCodeChildPr(pr)) return { direct: true, branch: pr.head.ref, pull: pr };
   const baseBranch = childBranchName(pr.number);
@@ -393,6 +470,93 @@ async function replyToTarget(token, owner, repo, prNumber, target, body) {
   });
 }
 
+async function reconcileDisagreements({
+  token,
+  owner,
+  repo,
+  prNumber,
+  targets,
+  response,
+  basePrompt,
+  model,
+}) {
+  const settledReplies = new Set();
+  for (const target of targets) {
+    let result = response.results.find(item => Number(item.comment_id) === target.id);
+    if (result?.decision !== 'disagree' || !isAutomatedFeedback(target)) continue;
+
+    const history = [];
+    await replyToTarget(
+      token,
+      owner,
+      repo,
+      prNumber,
+      target,
+      `**OpenCode fixer: disagree**\n\n${result.reply}`
+    );
+    history.push({ speaker: 'fixer', decision: 'disagree', reply: result.reply });
+
+    for (let round = 1; round <= MAX_RECONCILIATION_ROUNDS; round += 1) {
+      const adjudication = runReviewAdjudication(
+        `${basePrompt}\n\nThis is reconciliation round ${round} of ${MAX_RECONCILIATION_ROUNDS}. Reassess only comment ${target.id}.\nOriginal feedback: ${JSON.stringify(target)}\nDebate history: ${JSON.stringify(history)}`,
+        target.id
+      );
+      await replyToTarget(
+        token,
+        owner,
+        repo,
+        prNumber,
+        target,
+        `**OpenCode reviewer: ${adjudication.decision}**\n\n${adjudication.reply}`
+      );
+      history.push({ speaker: 'reviewer', ...adjudication });
+      if (adjudication.decision === 'accept') {
+        settledReplies.add(target.id);
+        break;
+      }
+
+      const before = `${git('status', '--porcelain')}\n${git('diff', '--binary')}`;
+      const retryPrompt = `${basePrompt}\n\nThe reviewer maintained comment ${target.id} after your disagreement. Reconsider only this target using the debate history below. Apply it if the reviewer is correct, disagree again only with concrete evidence, or clarify if human input is required.\nDebate history: ${JSON.stringify(history)}`;
+      const retry = extractAgentResponse(runOpenCode(model, retryPrompt, [target.id]), [target.id]);
+      const nextResult = retry.results[0];
+      const after = `${git('status', '--porcelain')}\n${git('diff', '--binary')}`;
+      if (nextResult.decision === 'apply' && before === after) {
+        throw new Error('OpenCode chose apply during reconciliation but produced no changes');
+      }
+      if (nextResult.decision !== 'apply' && before !== after) {
+        throw new Error('OpenCode changed files during reconciliation without choosing apply');
+      }
+      result = nextResult;
+      response.results = response.results.map(item =>
+        Number(item.comment_id) === target.id ? nextResult : item
+      );
+      if (result.decision !== 'disagree') break;
+
+      await replyToTarget(
+        token,
+        owner,
+        repo,
+        prNumber,
+        target,
+        `**OpenCode fixer: disagree**\n\n${result.reply}`
+      );
+      history.push({ speaker: 'fixer', decision: 'disagree', reply: result.reply });
+      if (round === MAX_RECONCILIATION_ROUNDS) {
+        response.results = response.results.map(item =>
+          Number(item.comment_id) === target.id
+            ? {
+                comment_id: target.id,
+                decision: 'clarify',
+                reply: 'The reviewer and fixer still disagree after three rounds. Human judgment is required.',
+              }
+            : item
+        );
+      }
+    }
+  }
+  return settledReplies;
+}
+
 async function main() {
   const eventName = process.env.GITHUB_EVENT_NAME;
   const payload = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
@@ -436,8 +600,13 @@ async function main() {
   }
 
   const child = await findChildPr(token, owner, repo, pr);
-  const agentPath = '.opencode/agents/pr-comment-fixer.md';
-  const agentDefinition = readFileSync(agentPath, 'utf8');
+  const agentPaths = [
+    '.opencode/agents/pr-comment-fixer.md',
+    '.opencode/agents/pr-disagreement-reviewer.md',
+  ];
+  const agentDefinitions = new Map(
+    agentPaths.map(agentPath => [agentPath, readFileSync(agentPath, 'utf8')])
+  );
   git('fetch', 'origin', pr.head.ref);
   if (child.pull && !child.direct) {
     git('fetch', 'origin', child.branch);
@@ -446,9 +615,11 @@ async function main() {
   } else {
     git('checkout', '-B', pr.head.ref, `origin/${pr.head.ref}`);
   }
-  appendFileSync('.git/info/exclude', `\n/${agentPath}\n`);
+  appendFileSync('.git/info/exclude', `\n${agentPaths.map(path => `/${path}`).join('\n')}\n`);
   mkdirSync('.opencode/agents', { recursive: true });
-  writeFileSync(agentPath, agentDefinition, { mode: 0o600 });
+  for (const [agentPath, definition] of agentDefinitions) {
+    writeFileSync(agentPath, definition, { mode: 0o600 });
+  }
 
   const [diff, commits, reviews] = await Promise.all([
     githubApi(token, `/repos/${owner}/${repo}/pulls/${prNumber}`, {
@@ -474,6 +645,16 @@ async function main() {
       `Unable to refresh the OpenCode App token; continuing with the existing token: ${error instanceof Error ? error.message : error}`
     );
   }
+  const settledReplies = await reconcileDisagreements({
+    token,
+    owner,
+    repo,
+    prNumber,
+    targets,
+    response,
+    basePrompt: prompt,
+    model: command.model,
+  });
   const dirty = Boolean(git('status', '--porcelain'));
   const applied = validateChangeResult(dirty, response.results);
 
@@ -513,6 +694,7 @@ async function main() {
   }
 
   for (const target of targets) {
+    if (settledReplies.has(target.id)) continue;
     const result = response.results.find(item => Number(item.comment_id) === target.id);
     const link = childUrl ? `\n\nChanges: ${childUrl}` : '';
     await replyToTarget(

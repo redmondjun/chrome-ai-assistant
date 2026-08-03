@@ -3,13 +3,16 @@ import test from 'node:test';
 
 import {
   childBranchName,
+  extractAdjudicationResponse,
   extractAgentResponse,
+  isAutomatedFeedback,
   isOpenCodeChildPr,
   isTrustedAssociation,
   parseCommand,
   parseCommentUrl,
   validateChangeResult,
   validateAgentResponse,
+  validateAdjudicationResponse,
   validatePullRequest,
 } from './opencode-address.mjs';
 
@@ -130,4 +133,26 @@ test('extracts a validated JSON object when the model wraps it in prose', () => 
     part: { text: `I've addressed the feedback.\n\`\`\`json\n${JSON.stringify(response)}\n\`\`\`` },
   });
   assert.equal(extractAgentResponse(stdout, [5]).results[0].decision, 'clarify');
+});
+
+test('recognizes only OpenCode-authored feedback for automatic reconciliation', () => {
+  assert.equal(
+    isAutomatedFeedback({ comments: [{ author: 'opencode-agent[bot]' }] }),
+    true
+  );
+  assert.equal(isAutomatedFeedback({ comments: [{ author: 'reviewer' }] }), false);
+});
+
+test('validates and extracts reviewer adjudication', () => {
+  const value = { comment_id: 5, decision: 'accept', reply: 'The fixer is correct.' };
+  assert.equal(validateAdjudicationResponse(value, 5), value);
+  assert.throws(
+    () => validateAdjudicationResponse({ ...value, decision: 'disagree' }, 5),
+    /accept or maintain/
+  );
+  const stdout = JSON.stringify({
+    type: 'text',
+    part: { text: `Reassessed.\n${JSON.stringify(value)}` },
+  });
+  assert.deepEqual(extractAdjudicationResponse(stdout, 5), value);
 });
