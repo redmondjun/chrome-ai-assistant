@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   extractReviewResponse,
+  formatReviewableRanges,
   isTrustedReviewTrigger,
   parseReviewableLines,
   reviewReadiness,
@@ -19,6 +20,14 @@ test('accepts automatic pull request events and trusted manual commands', () => 
     isTrustedReviewTrigger('issue_comment', { comment: { author_association: 'CONTRIBUTOR' } }),
     false
   );
+});
+
+test('formats exact reviewable line ranges for model grounding', () => {
+  const reviewable = new Map([
+    ['src/new.ts', new Set([1, 2, 3, 7, 9, 10])],
+    ['src/other.ts', new Set([42])],
+  ]);
+  assert.equal(formatReviewableRanges(reviewable), 'src/new.ts:1-3,7,9-10\nsrc/other.ts:42');
 });
 
 const diff = `diff --git a/src/a.ts b/src/a.ts

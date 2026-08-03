@@ -58,6 +58,27 @@ export function parseReviewableLines(diff) {
   return reviewable;
 }
 
+export function formatReviewableRanges(reviewable) {
+  return [...reviewable.entries()]
+    .map(([path, lines]) => {
+      const sorted = [...lines].sort((left, right) => left - right);
+      const ranges = [];
+      let start = sorted[0];
+      let end = start;
+      for (const line of sorted.slice(1)) {
+        if (line === end + 1) end = line;
+        else {
+          ranges.push(start === end ? `${start}` : `${start}-${end}`);
+          start = line;
+          end = line;
+        }
+      }
+      if (start !== undefined) ranges.push(start === end ? `${start}` : `${start}-${end}`);
+      return `${path}:${ranges.join(',')}`;
+    })
+    .join('\n');
+}
+
 export function validateReviewResponse(value, reviewable) {
   if (!value || typeof value.summary !== 'string' || !value.summary.trim()) {
     throw new Error('Review response must contain a summary');
@@ -225,13 +246,13 @@ function runOpenCode(prompt, reviewable) {
   const promptFile = '.opencode-review-prompt.md';
   writeFileSync(promptFile, prompt, { mode: 0o600 });
   try {
-    const paths = [...reviewable.keys()];
+    const locations = formatReviewableRanges(reviewable);
     for (let attempt = 1; attempt <= 2; attempt += 1) {
       const result = spawnSync(
         'opencode',
         [
           'run',
-          `Review the attached PR context. Return ONLY one JSON object, with no prose or Markdown. Required shape: {"summary":"concise review","findings":[{"path":"one valid path","line":123,"severity":"critical|high|medium|low","title":"short title","body":"specific impact and fix guidance"}]}. Use an empty findings array when there are no actionable issues. Valid paths: ${paths.join(', ')}`,
+          `Review the attached PR context. Return ONLY one JSON object, with no prose or Markdown. Required shape: {"summary":"concise review","findings":[{"path":"one valid path","line":123,"severity":"critical|high|medium|low","title":"short title","body":"specific impact and fix guidance"}]}. Use an empty findings array when there are no actionable issues. Every line must be inside its path's allowed RIGHT-side ranges:\n${locations}`,
           '--auto',
           '--format',
           'json',
@@ -298,7 +319,7 @@ async function main() {
   mkdirSync('.opencode/agents', { recursive: true });
   writeFileSync('.opencode/agents/pr-inline-reviewer.md', agentDefinition, { mode: 0o600 });
   const request = payload.comment?.body ?? '/oc review resumed after conflict resolution';
-  const prompt = `Review PR #${prNumber}: ${pr.title}\n\nTriggering request: ${request}\n\nPR description:\n${pr.body ?? ''}\n\nReport only actionable issues introduced by this PR. Every finding must use a path and RIGHT-side line present in the diff below. Prefer the smallest useful set and return at most ${MAX_FINDINGS}.\n\nReturn exactly:\n{"summary":"concise overall review","findings":[{"path":"src/file.ts","line":12,"severity":"critical|high|medium|low","title":"short title","body":"specific impact and fix guidance"}]}\n\nPR diff:\n${diff}`;
+  const prompt = `Review PR #${prNumber}: ${pr.title}\n\nTriggering request: ${request}\n\nPR description:\n${pr.body ?? ''}\n\nReport only actionable issues introduced by this PR. Every finding must use a path and RIGHT-side line present in the diff below. Prefer the smallest useful set and return at most ${MAX_FINDINGS}.\n\nAllowed RIGHT-side locations (the line number must be inside the listed range for its exact path):\n${formatReviewableRanges(reviewable)}\n\nReturn exactly:\n{"summary":"concise overall review","findings":[{"path":"src/file.ts","line":12,"severity":"critical|high|medium|low","title":"short title","body":"specific impact and fix guidance"}]}\n\nPR diff:\n${diff}`;
   let response;
   let correction = '';
   for (let attempt = 1; attempt <= 2; attempt += 1) {
