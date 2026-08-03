@@ -10,9 +10,11 @@ import type { ModelSettings, CompletionOptions, CompletionResult } from '@/share
 export class ModelRouter {
   private nimClient: NIMClient;
   private settings: ModelSettings;
+  private localOnly: boolean;
 
-  constructor(settings: ModelSettings) {
+  constructor(settings: ModelSettings, localOnly = false) {
     this.settings = settings;
+    this.localOnly = localOnly;
     this.nimClient = new NIMClient(settings.apiKey, settings.customEndpoint);
   }
 
@@ -24,6 +26,10 @@ export class ModelRouter {
   ): Promise<CompletionResult> {
     const useLocal = this.shouldUseLocal(question, context);
 
+    if (this.localOnly && !isLocalModelReady()) {
+      throw new Error('Local-only mode is enabled, but the local model is not ready.');
+    }
+
     if (useLocal && isLocalModelReady()) {
       try {
         options.signal?.throwIfAborted();
@@ -32,6 +38,8 @@ export class ModelRouter {
         return { text, modelUsed: 'local' };
       } catch (e) {
         if (options.signal?.aborted) throw e;
+        if (this.localOnly)
+          throw new Error('The local model failed in local-only mode.', { cause: e });
         console.warn('Local completion failed, falling back to cloud:', e);
       }
     }
@@ -64,6 +72,10 @@ export class ModelRouter {
   ): AsyncGenerator<{ chunk: string; usedLocal: boolean }, CompletionResult, unknown> {
     const useLocal = this.shouldUseLocal(question, context);
 
+    if (this.localOnly && !isLocalModelReady()) {
+      throw new Error('Local-only mode is enabled, but the local model is not ready.');
+    }
+
     if (useLocal && isLocalModelReady()) {
       try {
         let fullText = '';
@@ -75,6 +87,8 @@ export class ModelRouter {
         return { text: fullText, modelUsed: 'local' };
       } catch (e) {
         if (options.signal?.aborted) throw e;
+        if (this.localOnly)
+          throw new Error('The local model failed in local-only mode.', { cause: e });
         console.warn('Local streaming failed, falling back to cloud:', e);
       }
     }
@@ -105,6 +119,7 @@ export class ModelRouter {
     question: string,
     context: { hasLinks: boolean; contentLength: number }
   ): boolean {
+    if (this.localOnly) return isLocalModelReady();
     if (!this.settings.useLocal || !isLocalModelReady()) return false;
     if (!this.settings.autoRoute) return false;
     if (this.settings.forceCloudFor.some(t => question.toLowerCase().includes(t.toLowerCase())))
@@ -118,8 +133,9 @@ export class ModelRouter {
     return (isSimple || isShort || isClassification) && question.length < 200;
   }
 
-  updateSettings(settings: ModelSettings): void {
+  updateSettings(settings: ModelSettings, localOnly = this.localOnly): void {
     this.settings = settings;
+    this.localOnly = localOnly;
     this.nimClient.setApiKey(settings.apiKey);
     this.nimClient.setBaseUrl(settings.customEndpoint || '');
   }
@@ -134,6 +150,6 @@ export class ModelRouter {
   }
 }
 
-export function createRouter(settings: ModelSettings): ModelRouter {
-  return new ModelRouter(settings);
+export function createRouter(settings: ModelSettings, localOnly = false): ModelRouter {
+  return new ModelRouter(settings, localOnly);
 }

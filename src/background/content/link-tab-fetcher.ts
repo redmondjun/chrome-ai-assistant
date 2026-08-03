@@ -1,10 +1,13 @@
 import { getTabContent } from './tab-content';
-import type { LinkInfo, TabContent } from '@/shared/types';
+import { validateRetrievedPage } from './retrieved-page';
+import { evaluateLinkSafety } from '@/shared/link-safety';
+import type { LinkInfo, RetrievedPageRejectionReason, TabContent } from '@/shared/types';
 
 const LOAD_TIMEOUT_MS = 20000;
 const CONTENT_TIMEOUT_MS = 10000;
 const CONTENT_POLL_MS = 400;
 const STABLE_READS_REQUIRED = 2;
+const MIN_CONTENT_SETTLE_MS = 1600;
 
 export interface LinkTabFetchResult {
   content?: string;
@@ -12,12 +15,18 @@ export interface LinkTabFetchResult {
   finalUrl?: string;
   title?: string;
   error?: string;
+  failureReason?: RetrievedPageRejectionReason;
 }
 
 export async function fetchLinkContentInTab(
   url: string,
   signal?: AbortSignal
 ): Promise<LinkTabFetchResult> {
+  const safety = evaluateLinkSafety({ url });
+  if (!safety.safe) {
+    console.warn('[research]', 'blocked-unsafe-action', { url, reason: safety.reason });
+    return { error: `Blocked unsafe action URL. ${safety.reason || ''}`.trim() };
+  }
   let tabId: number | undefined;
 
   try {
@@ -30,12 +39,24 @@ export async function fetchLinkContentInTab(
     if (isAuthenticationPage(url, content.url, content.title)) {
       return {
         error: `The source redirected to an authentication page: ${content.title} (${content.url})`,
+        failureReason: 'authentication-required',
       };
     }
     const text = content.text.trim();
     if (!text) {
       return {
         error: `The authenticated tab loaded ${content.title} (${content.url}) but no readable text appeared within ${CONTENT_TIMEOUT_MS / 1000} seconds.`,
+      };
+    }
+    const validation = validateRetrievedPage({
+      content: text,
+      title: content.title,
+      url: content.url,
+    });
+    if (!validation.valid) {
+      return {
+        error: validation.message,
+        failureReason: validation.reason,
       };
     }
 
@@ -63,6 +84,7 @@ export async function fetchLinkContentInTab(
 
 async function waitForReadableContent(tabId: number, signal?: AbortSignal): Promise<TabContent> {
   const deadline = Date.now() + CONTENT_TIMEOUT_MS;
+  const minimumReadyAt = Date.now() + MIN_CONTENT_SETTLE_MS;
   let latest = await getTabContent(tabId);
   let previousFingerprint = '';
   let stableReads = 0;
@@ -70,7 +92,12 @@ async function waitForReadableContent(tabId: number, signal?: AbortSignal): Prom
   while (Date.now() < deadline) {
     const fingerprint = `${latest.url}\n${latest.title}\n${latest.text.trim()}`;
     stableReads = fingerprint === previousFingerprint ? stableReads + 1 : 0;
-    if (latest.text.trim().length >= 20 && stableReads >= STABLE_READS_REQUIRED) break;
+    if (
+      Date.now() >= minimumReadyAt &&
+      latest.text.trim().length >= 20 &&
+      stableReads >= STABLE_READS_REQUIRED
+    )
+      break;
     previousFingerprint = fingerprint;
     await delay(CONTENT_POLL_MS, signal);
     latest = await getTabContent(tabId);

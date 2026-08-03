@@ -37,6 +37,10 @@ global.chrome = {
 } as any;
 
 Object.assign(global, { TextDecoder, TextEncoder });
+Object.defineProperty(global, 'structuredClone', {
+  configurable: true,
+  value: <T>(value: T): T => JSON.parse(JSON.stringify(value)),
+});
 Object.defineProperty(Element.prototype, 'scrollIntoView', {
   writable: true,
   value: jest.fn(),

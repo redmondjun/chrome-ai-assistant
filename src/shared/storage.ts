@@ -21,6 +21,7 @@ export function toSyncedSettings(settings: StorageSettings): SyncedSettings {
       forceCloudFor: settings.model.forceCloudFor,
     },
     links: settings.links,
+    research: settings.research,
     ui: settings.ui,
     privacy: { clearOnClose: settings.privacy.clearOnClose },
   };
@@ -35,6 +36,7 @@ export function mergeSyncedSettings(
     ...local,
     model: { ...local.model, ...synced.model },
     links: { ...local.links, ...synced.links },
+    research: { ...local.research, ...synced.research },
     ui: { ...local.ui, ...synced.ui },
     privacy: { ...local.privacy, ...synced.privacy },
   };

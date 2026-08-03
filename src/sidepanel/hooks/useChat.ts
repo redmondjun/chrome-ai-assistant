@@ -1,18 +1,16 @@
 import { useCallback, useEffect, useState } from 'react';
+import { loadChatState, saveChatState } from '../chat-storage';
 import type { ChatConversation, ChatMessage, TabContent } from '@/shared/types';
-import {
-  ACCOUNT_STATE_KEY,
-  ANONYMOUS_SCOPE,
-  activeConversationKey,
-  conversationKey,
-} from '@/shared/storage';
+import { ACCOUNT_STATE_KEY, ANONYMOUS_SCOPE } from '@/shared/storage';
 
-const LEGACY_CONVERSATIONS_KEY = 'chrome-ai-conversations';
-const LEGACY_ACTIVE_KEY = 'chrome-ai-active-conversation';
-const LEGACY_CHAT_HISTORY_PREFIX = 'chrome-ai-chat-history:';
-const MAX_STORED_MESSAGES = 100;
+interface ResearchOptions {
+  localOnly: boolean;
+  cloudNoticeAccepted: boolean;
+  cloudEndpoint: string;
+  acceptCloudNotice: () => Promise<void>;
+}
 
-export function useChat(page: TabContent | null) {
+export function useChat(page: TabContent | null, researchOptions: ResearchOptions) {
   const [conversations, setConversations] = useState<ChatConversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string>();
   const [input, setInput] = useState('');
@@ -20,6 +18,7 @@ export function useChat(page: TabContent | null) {
   const [activeMessageId, setActiveMessageId] = useState<string>();
   const [isHistoryLoaded, setIsHistoryLoaded] = useState(false);
   const [scope, setScope] = useState(ANONYMOUS_SCOPE);
+  const [deepResearch, setDeepResearch] = useState(false);
   const activeConversation = conversations.find(chat => chat.id === activeConversationId);
   const messages = activeConversation?.messages || [];
 
@@ -37,26 +36,16 @@ export function useChat(page: TabContent | null) {
   useEffect(() => {
     let active = true;
     setIsHistoryLoaded(false);
-    void chrome.storage.local.get(null).then(async result => {
-      if (!active) return;
-      const scopedKey = conversationKey(scope);
-      const activeKey = activeConversationKey(scope);
-      const saved =
-        result[scopedKey] ??
-        (scope === ANONYMOUS_SCOPE ? result[LEGACY_CONVERSATIONS_KEY] : undefined);
-      const chats = Array.isArray(saved) ? saved : restoreLegacyConversations(result);
-      const selectedId =
-        result[activeKey] ?? (scope === ANONYMOUS_SCOPE ? result[LEGACY_ACTIVE_KEY] : undefined);
-      const selected = chats.find(chat => chat.id === selectedId) || chats[0];
-      const initial = selected || createConversation();
-      setConversations(selected ? chats : [initial]);
-      setActiveConversationId(initial.id);
-      setIsHistoryLoaded(true);
-      if (scope === ANONYMOUS_SCOPE && result[LEGACY_CONVERSATIONS_KEY] && !result[scopedKey]) {
-        await chrome.storage.local.set({ [scopedKey]: chats, [activeKey]: initial.id });
-        await chrome.storage.local.remove([LEGACY_CONVERSATIONS_KEY, LEGACY_ACTIVE_KEY]);
+    void loadChatState(scope).then(
+      ({ conversations: chats, activeConversationId: savedActiveId }) => {
+        if (!active) return;
+        const selected = chats.find(chat => chat.id === savedActiveId) || chats[0];
+        const initial = selected || createConversation();
+        setConversations(selected ? chats : [initial]);
+        setActiveConversationId(initial.id);
+        setIsHistoryLoaded(true);
       }
-    });
+    );
 
     return () => {
       active = false;
@@ -65,13 +54,7 @@ export function useChat(page: TabContent | null) {
 
   useEffect(() => {
     if (!isHistoryLoaded) return;
-    void chrome.storage.local.set({
-      [conversationKey(scope)]: conversations.map(chat => ({
-        ...chat,
-        messages: chat.messages.filter(message => !message.isStreaming).slice(-MAX_STORED_MESSAGES),
-      })),
-      [activeConversationKey(scope)]: activeConversationId,
-    });
+    void saveChatState(conversations, activeConversationId, scope);
   }, [activeConversationId, conversations, isHistoryLoaded, scope]);
 
   useEffect(() => {
@@ -96,23 +79,33 @@ export function useChat(page: TabContent | null) {
     return () => window.clearInterval(interval);
   }, [scope]);
 
+  useEffect(() => {
+    const runningResearch = messages.find(
+      message =>
+        message.researchJobId &&
+        ['queued', 'running'].includes(message.researchProgress?.status || '')
+    );
+    if (!runningResearch) return;
+    setIsLoading(true);
+    setActiveMessageId(runningResearch.id);
+  }, [messages]);
+
   const updateMessage = useCallback(
     (messageId: string, update: (message: ChatMessage) => ChatMessage) => {
       setConversations(current =>
-        current.map(chat =>
-          chat.id === activeConversationId
-            ? {
-                ...chat,
-                messages: chat.messages.map(message =>
-                  message.id === messageId ? update(message) : message
-                ),
-                updatedAt: Date.now(),
-              }
-            : chat
-        )
+        current.map(chat => {
+          if (!chat.messages.some(message => message.id === messageId)) return chat;
+          return {
+            ...chat,
+            messages: chat.messages.map(message =>
+              message.id === messageId ? update(message) : message
+            ),
+            updatedAt: Date.now(),
+          };
+        })
       );
     },
-    [activeConversationId]
+    []
   );
 
   const finishMessage = useCallback(
@@ -168,12 +161,26 @@ export function useChat(page: TabContent | null) {
             linkDecisions: [...(current.linkDecisions || []), message.decision],
           }));
           break;
+        case 'RESEARCH_PROGRESS':
+          updateMessage(message.messageId, current => ({
+            ...current,
+            researchJobId: message.progress.jobId,
+            researchProgress: message.progress,
+            isStreaming: ['queued', 'running'].includes(message.progress.status),
+          }));
+          if (['paused', 'cancelled', 'completed', 'failed'].includes(message.progress.status)) {
+            setIsLoading(false);
+          } else {
+            setIsLoading(true);
+            setActiveMessageId(message.messageId);
+          }
+          break;
         case 'STREAM_DONE':
         case 'DONE':
           finishMessage(message.messageId);
           break;
         case 'ERROR':
-          finishMessage(message.messageId, `Error: ${message.message}`);
+          finishMessage(message.messageId, formatChatError(message.message));
           break;
       }
     };
@@ -186,6 +193,14 @@ export function useChat(page: TabContent | null) {
     async (prompt?: string) => {
       const question = (prompt ?? input).trim();
       if (!question || !page || isLoading) return;
+
+      if (deepResearch && !researchOptions.localOnly && !researchOptions.cloudNoticeAccepted) {
+        const accepted = window.confirm(
+          `Deep Research sends internal page excerpts to ${researchOptions.cloudEndpoint || 'the configured NVIDIA endpoint'}. Continue only if this endpoint is approved for company data.`
+        );
+        if (!accepted) return;
+        await researchOptions.acceptCloudNotice();
+      }
 
       const userMessage = createMessage('user', question);
       const assistantMessage = createMessage('assistant', '', true);
@@ -208,7 +223,7 @@ export function useChat(page: TabContent | null) {
       try {
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
         const response = await chrome.runtime.sendMessage({
-          type: 'ASK_QUESTION',
+          type: deepResearch ? 'START_RESEARCH' : 'ASK_QUESTION',
           question,
           messageId: assistantMessage.id,
           context: page,
@@ -216,17 +231,45 @@ export function useChat(page: TabContent | null) {
           tabId: tab?.id,
         });
         if (response?.error) throw new Error(response.error);
+        if (response?.jobId) {
+          updateMessage(assistantMessage.id, message => ({
+            ...message,
+            researchJobId: response.jobId,
+            researchProgress: response.progress,
+          }));
+        }
       } catch (sendError) {
-        const error = sendError instanceof Error ? sendError.message : String(sendError);
-        finishMessage(assistantMessage.id, `Error: ${error}`);
+        finishMessage(assistantMessage.id, formatChatError(sendError));
       }
     },
-    [activeConversationId, finishMessage, input, isLoading, messages, page]
+    [
+      activeConversationId,
+      deepResearch,
+      finishMessage,
+      input,
+      isLoading,
+      messages,
+      page,
+      researchOptions,
+      updateMessage,
+    ]
   );
 
   const stop = useCallback(async () => {
     if (!activeMessageId) return;
     const messageId = activeMessageId;
+    const activeMessage = messages.find(message => message.id === messageId);
+    if (activeMessage?.researchJobId) {
+      try {
+        await chrome.runtime.sendMessage({
+          type: 'PAUSE_RESEARCH',
+          jobId: activeMessage.researchJobId,
+        });
+      } catch (error) {
+        console.error('[chat]', 'Could not pause research:', error);
+      }
+      return;
+    }
     updateMessage(messageId, message => ({
       ...message,
       content: message.content || 'Response stopped.',
@@ -239,7 +282,7 @@ export function useChat(page: TabContent | null) {
     } catch (error) {
       console.error('[chat]', 'Could not stop generation:', error);
     }
-  }, [activeMessageId, updateMessage]);
+  }, [activeMessageId, messages, updateMessage]);
 
   const startNewConversation = useCallback(() => {
     const conversation = createConversation();
@@ -258,9 +301,16 @@ export function useChat(page: TabContent | null) {
     setInput,
     isLoading,
     isHistoryLoaded,
+    deepResearch,
+    setDeepResearch,
     send,
     stop,
   };
+}
+
+function formatChatError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return `Error: ${message.replace(/^(?:Error:\s*)+/i, '')}`;
 }
 
 function createConversation(): ChatConversation {
@@ -272,31 +322,6 @@ function createConversation(): ChatConversation {
     createdAt: now,
     updatedAt: now,
   };
-}
-
-function restoreLegacyConversations(storage: { [key: string]: unknown }): ChatConversation[] {
-  return Object.entries(storage)
-    .filter(([key, value]) => key.startsWith(LEGACY_CHAT_HISTORY_PREFIX) && Array.isArray(value))
-    .map(([key, value]) => {
-      const url = key.slice(LEGACY_CHAT_HISTORY_PREFIX.length);
-      const messages = value as ChatMessage[];
-      const timestamp = messages.at(-1)?.timestamp || Date.now();
-      return {
-        id: crypto.randomUUID(),
-        title: `Chat from ${getHost(url)}`,
-        messages,
-        createdAt: messages[0]?.timestamp || timestamp,
-        updatedAt: timestamp,
-      };
-    });
-}
-
-function getHost(url: string): string {
-  try {
-    return new URL(url).hostname;
-  } catch {
-    return url;
-  }
 }
 
 function createMessage(

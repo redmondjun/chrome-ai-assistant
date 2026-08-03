@@ -5,6 +5,7 @@
   "description": "AI-powered browser assistant that reads tabs, follows links, and generates documents using NVIDIA Nemotron models",
   "permissions": [
     "activeTab",
+    "alarms",
     "identity",
     "scripting",
     "storage",

@@ -49,6 +49,16 @@ describe('Content Extraction', () => {
       expect(div.querySelector('p')).not.toBeNull();
     });
 
+    it('keeps review comments as research evidence', () => {
+      document.body.innerHTML = '<main><div class="comments">Useful review feedback</div></main>';
+      const main = document.querySelector('main');
+      if (!main) throw new Error('Missing test content');
+
+      cleanElement(main);
+
+      expect(main).toHaveTextContent('Useful review feedback');
+    });
+
     it('removes ads and social elements', () => {
       const div = document.createElement('div');
       div.innerHTML = '<p>Content</p><div class="ads">Ad</div><div class="social">Share</div>';

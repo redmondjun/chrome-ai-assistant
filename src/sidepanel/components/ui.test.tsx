@@ -1,11 +1,20 @@
 import React from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
-jest.mock('marked', () => ({ marked: { parse: (value: string) => `<p>${value}</p>` } }));
 jest.mock('@/shared/useAccount', () => ({
   useAccount: () => ({
     account: { configured: false, user: null },
     syncStatus: { state: 'idle' },
   }),
+}));
+jest.mock('marked', () => ({
+  marked: {
+    parse: (value: string) =>
+      value === 'answer-link'
+        ? '<p><a href="https://example.com/evidence">Open evidence</a></p>'
+        : value === 'unsafe-answer-link'
+          ? '<p><a href="https://stash.example.com/plugins/servlet/createBranch?issue=SQ-1">Create branch</a></p>'
+          : `<p>${value}</p>`,
+  },
 }));
 import { AnswerDetails } from './AnswerDetails';
 import { Composer } from './Composer';
@@ -50,7 +59,7 @@ describe('side panel UI', () => {
 
   it('only shows answer details when metadata exists', () => {
     const { rerender } = render(<AnswerDetails />);
-    expect(screen.queryByText('Details')).not.toBeInTheDocument();
+    expect(screen.queryByText('Reasoning')).not.toBeInTheDocument();
     rerender(
       <AnswerDetails
         reasoning={[
@@ -58,7 +67,7 @@ describe('side panel UI', () => {
         ]}
       />
     );
-    expect(screen.getByText('Details')).toBeInTheDocument();
+    expect(screen.getByText('Reasoning')).toBeInTheDocument();
     expect(screen.getByText('Checking the page context')).toBeInTheDocument();
   });
 
@@ -75,6 +84,171 @@ describe('side panel UI', () => {
       />
     );
     expect(screen.getByText(/request failed/i)).toBeInTheDocument();
+  });
+
+  it('opens web links from generated answers in a browser tab', () => {
+    render(
+      <MessageItem
+        message={{ id: '1', role: 'assistant', content: 'answer-link', timestamp: Date.now() }}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('link', { name: 'Open evidence' }));
+
+    expect(chrome.tabs.create).toHaveBeenCalledWith({
+      url: 'https://example.com/evidence',
+      active: true,
+    });
+  });
+
+  it('blocks generated authenticated-action links', () => {
+    const alert = jest.spyOn(window, 'alert').mockImplementation(() => undefined);
+    jest.mocked(chrome.tabs.create).mockClear();
+    render(
+      <MessageItem
+        message={{
+          id: 'unsafe',
+          role: 'assistant',
+          content: 'unsafe-answer-link',
+          timestamp: Date.now(),
+        }}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('link', { name: 'Create branch' }));
+
+    expect(chrome.tabs.create).not.toHaveBeenCalled();
+    expect(alert).toHaveBeenCalledWith(expect.stringMatching(/blocked/i));
+    alert.mockRestore();
+  });
+
+  it('shows the current source-research progress while streaming', () => {
+    render(
+      <MessageItem
+        message={{
+          id: '1',
+          role: 'assistant',
+          content: '',
+          timestamp: Date.now(),
+          isStreaming: true,
+          reasoning: [
+            { step: 1, type: 'fetch', thought: 'Researching sources', timestamp: Date.now() },
+            { step: 2, type: 'extract', thought: 'Reading source content', timestamp: Date.now() },
+          ],
+          linkVisits: [
+            {
+              url: 'https://example.com/finished',
+              title: 'Finished source',
+              status: 'fetching',
+              relevanceScore: 0.9,
+              timestamp: Date.now(),
+            },
+            {
+              url: 'https://example.com/finished',
+              title: 'Finished source',
+              status: 'success',
+              relevanceScore: 0.9,
+              timestamp: Date.now(),
+            },
+            {
+              url: 'https://example.com/current',
+              title: 'Current source',
+              status: 'fetching',
+              relevanceScore: 0.8,
+              timestamp: Date.now(),
+            },
+          ],
+        }}
+      />
+    );
+
+    expect(screen.getByRole('status')).toHaveTextContent('Opening Current source');
+    expect(screen.getByRole('status')).toHaveTextContent('1 source read');
+    expect(screen.getByRole('status')).toHaveTextContent('0s elapsed');
+    expect(screen.getByText('Reasoning').closest('details')).toHaveAttribute('open');
+    expect(screen.getByText('Sources visited').closest('details')).toHaveAttribute('open');
+  });
+
+  it('shows persistent Deep Research progress and expandable worker activity', async () => {
+    jest.mocked(chrome.runtime.sendMessage).mockResolvedValueOnce({ job: researchJobFixture() });
+    render(
+      <MessageItem
+        message={{
+          id: 'research-message',
+          role: 'assistant',
+          content: '',
+          timestamp: Date.now(),
+          isStreaming: true,
+          researchJobId: 'job-1',
+          researchProgress: {
+            jobId: 'job-1',
+            status: 'running',
+            activity: 'Researching architecture...',
+            totalTasks: 400,
+            completedTasks: 12,
+            failedTasks: 1,
+            activeWorkers: 3,
+            sourcesRead: 48,
+            sourcesFailed: 1,
+            updatedAt: Date.now(),
+            activeTaskIds: [],
+            stage: 'seed-scan',
+            currentBatch: 3,
+            totalBatches: 17,
+            seedsScanned: 62,
+            subjectsExpanded: 0,
+            uniqueSourcesSucceeded: 61,
+            uniqueSourcesFailed: 1,
+            sourceCacheHits: 4,
+            sourceRetries: 1,
+            sourceBudgetUsed: 63,
+            sourceBudgetTotal: 1000,
+            sourceBudgetOverflow: 391,
+          },
+        }}
+      />
+    );
+
+    expect(screen.getByLabelText('Deep Research progress')).toHaveTextContent('12/400 subjects');
+    expect(screen.getByLabelText('Deep Research progress')).toHaveTextContent('3 workers active');
+    expect(screen.getByLabelText('Deep Research progress')).toHaveTextContent(
+      'Seed scan · batch 3 of 17'
+    );
+    expect(screen.getByLabelText('Deep Research progress')).toHaveTextContent(
+      '61 unique sources read'
+    );
+    expect(screen.getByLabelText('Deep Research progress')).toHaveTextContent(
+      '63/1000 source budget'
+    );
+    expect(screen.getByLabelText('Deep Research progress')).toHaveTextContent(
+      '391 legacy sources above the current budget'
+    );
+    const worker = await screen.findByText('Architecture source');
+    expect(worker.closest('details')).not.toHaveAttribute('open');
+    fireEvent.click(worker.closest('summary')!);
+    expect(screen.getByText('Scoring related documentation')).toBeInTheDocument();
+    expect(screen.getByText(/waiting for AI scoring/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({
+      type: 'PAUSE_RESEARCH',
+      jobId: 'job-1',
+    });
+  });
+
+  it('closes reasoning after the answer is generated', () => {
+    const message = {
+      id: '1',
+      role: 'assistant' as const,
+      content: '',
+      timestamp: Date.now(),
+      isStreaming: true,
+      reasoning: [{ step: 1, type: 'classify' as const, thought: 'Analyzing', timestamp: 1 }],
+    };
+    const { rerender } = render(<MessageItem message={message} />);
+    expect(screen.getByText('Reasoning').closest('details')).toHaveAttribute('open');
+
+    rerender(<MessageItem message={{ ...message, content: 'Answer', isStreaming: false }} />);
+    expect(screen.getByText('Reasoning').closest('details')).not.toHaveAttribute('open');
   });
 
   it('does not pull the reader back to the bottom while streaming updates arrive', () => {
@@ -141,3 +315,55 @@ describe('side panel UI', () => {
     expect(onRetry).toHaveBeenCalledTimes(1);
   });
 });
+
+function researchJobFixture() {
+  const now = Date.now();
+  return {
+    id: 'job-1',
+    messageId: 'research-message',
+    question: 'Research architecture',
+    status: 'running',
+    tasks: [
+      {
+        id: 'task-1',
+        label: 'Architecture source',
+        sourceUrl: 'https://example.com/architecture',
+        title: 'Architecture source',
+        status: 'running',
+        phase: 'scoring',
+        phaseStartedAt: now,
+        lastActivityAt: now,
+        reasoning: [
+          {
+            step: 1,
+            type: 'classify',
+            thought: 'Scoring related documentation',
+            timestamp: now,
+          },
+        ],
+        linkVisits: [],
+        relatedSourcesRead: 0,
+        relatedSourcesAttempted: 0,
+        evidence: [],
+        decisions: [],
+        pendingSources: [],
+        visitedUrls: [],
+      },
+    ],
+    progress: {
+      jobId: 'job-1',
+      status: 'running',
+      activity: 'Scoring links',
+      totalTasks: 1,
+      completedTasks: 0,
+      failedTasks: 0,
+      activeWorkers: 1,
+      sourcesRead: 0,
+      sourcesFailed: 0,
+      activeTaskIds: ['task-1'],
+      updatedAt: now,
+    },
+    createdAt: now,
+    updatedAt: now,
+  };
+}

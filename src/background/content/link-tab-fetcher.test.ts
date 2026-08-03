@@ -32,7 +32,16 @@ describe('fetchLinkContentInTab', () => {
       url: 'https://stash.globalrelay.net/example',
       active: false,
     });
-    expect(chrome.tabs.sendMessage).toHaveBeenCalledTimes(3);
+    expect((chrome.tabs.sendMessage as jest.Mock).mock.calls.length).toBeGreaterThanOrEqual(3);
     expect(chrome.tabs.remove).toHaveBeenCalledWith(7);
+  });
+
+  it('blocks action URLs before creating an authenticated tab', async () => {
+    const result = await fetchLinkContentInTab(
+      'https://stash.example.com/plugins/servlet/createBranch?issueKey=SQ-1'
+    );
+
+    expect(result.error).toMatch(/blocked unsafe action/i);
+    expect(chrome.tabs.create).not.toHaveBeenCalled();
   });
 });

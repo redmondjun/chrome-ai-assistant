@@ -20,6 +20,13 @@ const settings: StorageSettings = {
     allowedDomains: [],
     blockedDomains: [],
   },
+  research: {
+    workerConcurrency: 3,
+    maxRelatedSourcesPerTask: 5,
+    subjectBatchSize: 25,
+    maxUniqueSourcesPerJob: 1000,
+    cloudNoticeAccepted: false,
+  },
   ui: { theme: 'dark', showReasoning: true, showLinks: true, streaming: true },
   privacy: { localOnly: true, clearOnClose: false },
 };

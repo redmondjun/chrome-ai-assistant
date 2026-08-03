@@ -79,6 +79,12 @@ describe('Analysis Pipeline', () => {
       expect(mockCallbacks.onLinkVisit).toHaveBeenCalledWith(
         expect.objectContaining({ url: 'https://example.com/link1', status: 'success' })
       );
+      expect(mockCallbacks.onReasoning).toHaveBeenCalledWith(
+        expect.objectContaining({ thought: expect.stringContaining('Opening depth 1 source 1') })
+      );
+      expect(mockCallbacks.onReasoning).toHaveBeenCalledWith(
+        expect.objectContaining({ thought: expect.stringContaining('Read Link 1') })
+      );
     });
 
     it('emits reasoning steps', async () => {
@@ -205,6 +211,37 @@ describe('Analysis Pipeline', () => {
       consoleInfo.mockRestore();
     });
 
+    it('never visits unsafe action links even when asked to visit all links', async () => {
+      mockRouter.streamComplete.mockImplementation(async function* () {
+        yield { chunk: 'Answer', usedLocal: true };
+      });
+      global.fetch = jest.fn();
+      const unsafeContent: TabContent = {
+        ...mockContent,
+        links: [
+          {
+            url: 'https://stash.example.com/plugins/servlet/createBranch?issue=SQ-1',
+            text: 'Create branch',
+            isExternal: true,
+          },
+        ],
+      };
+
+      await analyzeWithReasoning(
+        mockRouter as any,
+        unsafeContent,
+        'Visit all links',
+        mockSettings,
+        mockCallbacks
+      );
+
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(fetchLinkContentInTab).not.toHaveBeenCalled();
+      expect(mockCallbacks.onLinkDecision).toHaveBeenCalledWith(
+        expect.objectContaining({ reason: 'blocked-unsafe-action', outcome: 'discarded' })
+      );
+    });
+
     it('logs links rejected by relevance scoring', async () => {
       const consoleInfo = jest.spyOn(console, 'info').mockImplementation(() => undefined);
       mockRouter.complete.mockResolvedValue({ text: '[0.1, 0.9]' });
@@ -306,6 +343,76 @@ describe('Analysis Pipeline', () => {
 
       expect(mockCallbacks.onChunk).toHaveBeenCalledWith(
         expect.stringContaining('0 of 1 links were retrieved successfully')
+      );
+      expect(mockRouter.streamComplete).not.toHaveBeenCalled();
+    });
+
+    it('uses compact persisted Deep Research findings in a later chat question', async () => {
+      mockRouter.streamComplete.mockImplementation(async function* () {
+        yield { chunk: 'STAR answer from persisted research', usedLocal: false };
+      });
+
+      await analyzeWithReasoning(
+        mockRouter as any,
+        mockContent,
+        'Use everything you already read to generate STAR stories',
+        { ...mockSettings, links: { ...mockSettings.links, enabled: false } },
+        mockCallbacks,
+        [],
+        undefined,
+        {
+          jobId: 'research-job',
+          originalQuestion: 'Research all tickets',
+          status: 'failed',
+          completedSubjects: 48,
+          totalSubjects: 418,
+          successfulSources: 1177,
+          failedSources: 213,
+          summary: 'Compact validated findings with source URLs',
+          partial: true,
+          error: '370 research subjects failed',
+        }
+      );
+
+      const prompt = mockRouter.streamComplete.mock.calls[0][2];
+      expect(prompt).toContain('Persisted Deep Research results');
+      expect(prompt).toContain('Validated readable sources: 1177');
+      expect(prompt).toContain('Failed or inaccessible sources: 213');
+      expect(prompt).toContain('Compact validated findings with source URLs');
+      expect(prompt).toContain(
+        'do not claim that nothing was read when its successful-source count is greater than zero'
+      );
+      expect(mockCallbacks.onReasoning).toHaveBeenCalledWith(
+        expect.objectContaining({
+          thought: expect.stringContaining('persisted Deep Research findings'),
+        })
+      );
+    });
+
+    it('reports persisted Deep Research source outcomes directly', async () => {
+      await analyzeWithReasoning(
+        mockRouter as any,
+        mockContent,
+        'Did you visit all the sources?',
+        mockSettings,
+        mockCallbacks,
+        [],
+        undefined,
+        {
+          jobId: 'research-job',
+          originalQuestion: 'Research all tickets',
+          status: 'failed',
+          completedSubjects: 48,
+          totalSubjects: 418,
+          successfulSources: 1177,
+          failedSources: 213,
+          summary: 'Partial findings',
+          partial: true,
+        }
+      );
+
+      expect(mockCallbacks.onChunk).toHaveBeenCalledWith(
+        '1177 research sources were retrieved successfully and 213 failed or were inaccessible. The research job is failed and has partial findings available.'
       );
       expect(mockRouter.streamComplete).not.toHaveBeenCalled();
     });
@@ -414,6 +521,7 @@ describe('Analysis Pipeline', () => {
     });
 
     it('falls back to keyword matching on error', async () => {
+      const onProgress = jest.fn();
       const mockRouter = {
         complete: jest.fn().mockRejectedValue(new Error('API error')),
       };
@@ -423,8 +531,72 @@ describe('Analysis Pipeline', () => {
         { url: 'https://example.com/about', text: 'About', isExternal: false },
       ];
 
-      const scores = await classifyLinks(mockRouter as any, links, 'pricing');
+      const scores = await classifyLinks(
+        mockRouter as any,
+        links,
+        'pricing',
+        undefined,
+        onProgress
+      );
       expect(scores[0]).toBeGreaterThan(scores[1]);
+      expect(onProgress).toHaveBeenCalledWith(expect.stringContaining('API error'));
+    });
+
+    it('warns when scoring is slow before eventually falling back', async () => {
+      jest.useFakeTimers();
+      try {
+        const onProgress = jest.fn();
+        const mockRouter = { complete: jest.fn(() => new Promise(() => undefined)) };
+        const links = [{ url: 'https://example.com/pricing', text: 'Pricing', isExternal: false }];
+
+        const scoresPromise = classifyLinks(
+          mockRouter as any,
+          links,
+          'pricing',
+          undefined,
+          onProgress
+        );
+        await jest.advanceTimersByTimeAsync(15000);
+        expect(onProgress).toHaveBeenCalledWith(expect.stringContaining('still running'));
+
+        await jest.advanceTimersByTimeAsync(45000);
+
+        await expect(scoresPromise).resolves.toEqual([0.9]);
+        expect(onProgress).toHaveBeenCalledWith(
+          expect.stringContaining('timed out after 60 seconds')
+        );
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('scores large link sets in visible batches', async () => {
+      const onProgress = jest.fn();
+      const mockRouter = {
+        complete: jest
+          .fn()
+          .mockResolvedValueOnce({ text: `[${Array(10).fill(0.8).join(',')}]` })
+          .mockResolvedValueOnce({ text: `[${Array(10).fill(0.7).join(',')}]` })
+          .mockResolvedValueOnce({ text: `[${Array(5).fill(0.6).join(',')}]` }),
+      };
+      const links = Array.from({ length: 25 }, (_, index) => ({
+        url: `https://example.com/${index + 1}`,
+        text: `Link ${index + 1}`,
+        isExternal: false,
+      }));
+
+      const scores = await classifyLinks(
+        mockRouter as any,
+        links,
+        'supporting evidence',
+        undefined,
+        onProgress
+      );
+
+      expect(mockRouter.complete).toHaveBeenCalledTimes(3);
+      expect(scores).toHaveLength(25);
+      expect(onProgress).toHaveBeenCalledWith('Scoring links 1-10 of 25...');
+      expect(onProgress).toHaveBeenCalledWith('Finished scoring links 21-25 of 25.');
     });
 
     it('keeps uniform model scores when every source may be relevant', async () => {

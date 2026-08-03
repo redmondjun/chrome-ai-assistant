@@ -1,4 +1,5 @@
 import type { TabContent, LinkInfo } from '@/shared/types';
+import { evaluateLinkSafety } from '@/shared/link-safety';
 
 const READABILITY_SELECTORS = [
   'article',
@@ -77,13 +78,15 @@ function extractLinks(): LinkInfo[] {
 
       const context = getLinkContext(anchor as HTMLAnchorElement);
 
-      links.push({
+      const link: LinkInfo = {
         url,
         text,
         title: anchor.getAttribute('title') || undefined,
         context,
         isExternal: new URL(url).hostname !== window.location.hostname,
-      });
+      };
+      link.safety = evaluateLinkSafety(link);
+      links.push(link);
     } catch {
       // Invalid URL
     }

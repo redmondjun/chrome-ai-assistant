@@ -8,6 +8,9 @@ interface ComposerProps {
   busy: boolean;
   generating: boolean;
   onStop: () => void;
+  deepResearch?: boolean;
+  onDeepResearchChange?: (enabled: boolean) => void;
+  researchSubjectCount?: number;
 }
 
 export function Composer({
@@ -18,6 +21,9 @@ export function Composer({
   busy,
   generating,
   onStop,
+  deepResearch = false,
+  onDeepResearchChange,
+  researchSubjectCount = 0,
 }: ComposerProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const disabled = !pageReady || busy;
@@ -42,6 +48,20 @@ export function Composer({
       {!pageReady && (
         <p className="composer-note">Open a readable webpage before asking a question.</p>
       )}
+      <label className="deep-research-toggle">
+        <input
+          type="checkbox"
+          checked={deepResearch}
+          disabled={generating}
+          onChange={event => onDeepResearchChange?.(event.target.checked)}
+        />
+        <span>Deep Research</span>
+        <small>
+          {researchSubjectCount > 0
+            ? `${researchSubjectCount} researchable link${researchSubjectCount === 1 ? '' : 's'} detected`
+            : 'Use independent workers to investigate links from this page'}
+        </small>
+      </label>
       <div className="composer">
         <textarea
           ref={textareaRef}

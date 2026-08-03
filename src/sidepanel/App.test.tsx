@@ -34,6 +34,13 @@ const savedSettings: StorageSettings = {
     allowedDomains: [],
     blockedDomains: [],
   },
+  research: {
+    workerConcurrency: 3,
+    maxRelatedSourcesPerTask: 5,
+    subjectBatchSize: 25,
+    maxUniqueSourcesPerJob: 1000,
+    cloudNoticeAccepted: false,
+  },
   ui: {
     theme: 'light',
     showReasoning: true,
@@ -67,15 +74,20 @@ function mockMissingLocalModel() {
 }
 
 describe('side panel App', () => {
-  let runtimeListener: ((message: any) => void) | undefined;
+  let runtimeListeners: Array<(message: any) => void>;
+
+  function dispatchRuntimeMessage(message: any) {
+    runtimeListeners.forEach(listener => listener(message));
+  }
 
   beforeEach(() => {
     jest.clearAllMocks();
-    runtimeListener = undefined;
+    runtimeListeners = [];
+    window.confirm = jest.fn(() => true);
     mockMissingLocalModel();
     (chrome.tabs.query as jest.Mock).mockResolvedValue([{ id: 42 }]);
     (chrome.runtime.onMessage.addListener as jest.Mock).mockImplementation(listener => {
-      runtimeListener = listener;
+      runtimeListeners.push(listener);
     });
     (chrome.storage.sync.get as jest.Mock).mockResolvedValue({
       'chrome-ai-settings': savedSettings,
@@ -134,14 +146,14 @@ describe('side panel App', () => {
       .find(message => message.type === 'ASK_QUESTION');
 
     act(() =>
-      runtimeListener?.({
+      dispatchRuntimeMessage({
         type: 'STREAM_CHUNK',
         messageId: ask.messageId,
         chunk: 'A concise answer.',
       })
     );
     act(() =>
-      runtimeListener?.({
+      dispatchRuntimeMessage({
         type: 'LINK_DECISION',
         messageId: ask.messageId,
         decision: {
@@ -155,7 +167,7 @@ describe('side panel App', () => {
         },
       })
     );
-    act(() => runtimeListener?.({ type: 'STREAM_DONE', messageId: ask.messageId }));
+    act(() => dispatchRuntimeMessage({ type: 'STREAM_DONE', messageId: ask.messageId }));
 
     expect(screen.getByText('A concise answer.')).toBeInTheDocument();
     expect(screen.queryByText('Generating')).not.toBeInTheDocument();
@@ -221,6 +233,49 @@ describe('side panel App', () => {
     );
     expect(screen.getByText('Response stopped.')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /stop response/i })).not.toBeInTheDocument();
+  });
+
+  it('starts explicit Deep Research with the current page context', async () => {
+    render(<App />);
+
+    expect(await screen.findByText('Example article')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('checkbox', { name: /deep research/i }));
+    fireEvent.change(screen.getByRole('textbox', { name: /ask about this page/i }), {
+      target: { value: 'Research every Jira ticket' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /send message/i }));
+
+    await waitFor(() =>
+      expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'START_RESEARCH',
+          question: 'Research every Jira ticket',
+          context: page,
+        })
+      )
+    );
+  });
+
+  it('does not duplicate an error prefix from the background worker', async () => {
+    (chrome.runtime.sendMessage as jest.Mock).mockImplementation(async message => {
+      if (message.type === 'GET_SETTINGS') return { settings: savedSettings };
+      if (message.type === 'AUTH_GET_STATE') {
+        return { account: { configured: false, user: null } };
+      }
+      if (message.type === 'GET_TAB_CONTENT') return { type: 'TAB_CONTENT', content: page };
+      if (message.type === 'ASK_QUESTION') return { error: 'Error: Router not initialized' };
+      return { ok: true };
+    });
+    render(<App />);
+
+    expect(await screen.findByText('Example article')).toBeInTheDocument();
+    fireEvent.change(screen.getByRole('textbox', { name: /ask about this page/i }), {
+      target: { value: 'What happened?' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /send message/i }));
+
+    expect(await screen.findByText('Error: Router not initialized')).toBeInTheDocument();
+    expect(screen.queryByText('Error: Error: Router not initialized')).not.toBeInTheDocument();
   });
 
   it('shows a readable page error and retries successfully', async () => {
