@@ -3,10 +3,23 @@ import test from 'node:test';
 
 import {
   extractReviewResponse,
+  isTrustedReviewTrigger,
   parseReviewableLines,
   reviewReadiness,
   validateReviewResponse,
 } from './opencode-review.mjs';
+
+test('accepts automatic pull request events and trusted manual commands', () => {
+  assert.equal(isTrustedReviewTrigger('pull_request', { pull_request: {} }), true);
+  assert.equal(
+    isTrustedReviewTrigger('issue_comment', { comment: { author_association: 'OWNER' } }),
+    true
+  );
+  assert.equal(
+    isTrustedReviewTrigger('issue_comment', { comment: { author_association: 'CONTRIBUTOR' } }),
+    false
+  );
+});
 
 const diff = `diff --git a/src/a.ts b/src/a.ts
 --- a/src/a.ts

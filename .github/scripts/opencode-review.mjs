@@ -7,6 +7,11 @@ const MODEL = 'nvidia/nvidia/nemotron-3-super-120b-a12b';
 const MAX_FINDINGS = 10;
 const PENDING_LABEL = 'opencode-review-pending';
 
+export function isTrustedReviewTrigger(eventName, payload) {
+  if (eventName === 'pull_request') return true;
+  return TRUSTED_ASSOCIATIONS.has(payload.comment?.author_association);
+}
+
 export function reviewReadiness(pr) {
   if (pr.mergeable === false || pr.mergeable_state === 'dirty') return 'conflicted';
   if (pr.mergeable == null || pr.mergeable_state === 'unknown') return 'unknown';
@@ -221,31 +226,34 @@ function runOpenCode(prompt, reviewable) {
   writeFileSync(promptFile, prompt, { mode: 0o600 });
   try {
     const paths = [...reviewable.keys()];
-    const result = spawnSync(
-      'opencode',
-      [
-        'run',
-        `Review the attached PR context. Return ONLY one JSON object, with no prose or Markdown. Required shape: {"summary":"concise review","findings":[{"path":"one valid path","line":123,"severity":"critical|high|medium|low","title":"short title","body":"specific impact and fix guidance"}]}. Use an empty findings array when there are no actionable issues. Valid paths: ${paths.join(', ')}`,
-        '--auto',
-        '--format',
-        'json',
-        '--agent',
-        'pr-inline-reviewer',
-        '--model',
-        MODEL,
-        '--file',
-        promptFile,
-      ],
-      {
-        encoding: 'utf8',
-        env: childEnv,
-        maxBuffer: 20 * 1024 * 1024,
-        timeout: 15 * 60 * 1000,
-      }
-    );
-    if (result.error) throw result.error;
-    if (result.status !== 0) throw new Error(result.stderr || result.stdout || 'OpenCode failed');
-    return result.stdout;
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      const result = spawnSync(
+        'opencode',
+        [
+          'run',
+          `Review the attached PR context. Return ONLY one JSON object, with no prose or Markdown. Required shape: {"summary":"concise review","findings":[{"path":"one valid path","line":123,"severity":"critical|high|medium|low","title":"short title","body":"specific impact and fix guidance"}]}. Use an empty findings array when there are no actionable issues. Valid paths: ${paths.join(', ')}`,
+          '--auto',
+          '--format',
+          'json',
+          '--agent',
+          'pr-inline-reviewer',
+          '--model',
+          MODEL,
+          '--file',
+          promptFile,
+        ],
+        {
+          encoding: 'utf8',
+          env: childEnv,
+          maxBuffer: 20 * 1024 * 1024,
+          timeout: 15 * 60 * 1000,
+        }
+      );
+      if (!result.error && result.status === 0) return result.stdout;
+      const failure = result.error ?? new Error(result.stderr || result.stdout || 'OpenCode failed');
+      if (attempt === 2) throw failure;
+      console.warn(`OpenCode attempt ${attempt} failed; retrying once.`);
+    }
   } finally {
     unlinkSync(promptFile);
   }
@@ -257,10 +265,7 @@ function formatFinding(finding) {
 
 async function main() {
   const payload = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
-  const isPendingResume =
-    process.env.GITHUB_EVENT_NAME === 'pull_request' &&
-    payload.pull_request?.labels?.some(label => label.name === PENDING_LABEL);
-  if (!isPendingResume && !TRUSTED_ASSOCIATIONS.has(payload.comment?.author_association)) {
+  if (!isTrustedReviewTrigger(process.env.GITHUB_EVENT_NAME, payload)) {
     throw new Error('The triggering author is not trusted');
   }
   const repository = payload.repository.full_name;
