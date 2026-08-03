@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const TRUSTED_ASSOCIATIONS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
@@ -436,6 +436,8 @@ async function main() {
   }
 
   const child = await findChildPr(token, owner, repo, pr);
+  const agentPath = '.opencode/agents/pr-comment-fixer.md';
+  const agentDefinition = readFileSync(agentPath, 'utf8');
   git('fetch', 'origin', pr.head.ref);
   if (child.pull && !child.direct) {
     git('fetch', 'origin', child.branch);
@@ -444,6 +446,9 @@ async function main() {
   } else {
     git('checkout', '-B', pr.head.ref, `origin/${pr.head.ref}`);
   }
+  appendFileSync('.git/info/exclude', `\n/${agentPath}\n`);
+  mkdirSync('.opencode/agents', { recursive: true });
+  writeFileSync(agentPath, agentDefinition, { mode: 0o600 });
 
   const [diff, commits, reviews] = await Promise.all([
     githubApi(token, `/repos/${owner}/${repo}/pulls/${prNumber}`, {
@@ -461,8 +466,14 @@ async function main() {
     ),
     targets.map(target => target.id)
   );
-  token = await getAppToken();
-  failureContext.token = token;
+  try {
+    token = await getAppToken();
+    failureContext.token = token;
+  } catch (error) {
+    console.warn(
+      `Unable to refresh the OpenCode App token; continuing with the existing token: ${error instanceof Error ? error.message : error}`
+    );
+  }
   const dirty = Boolean(git('status', '--porcelain'));
   const applied = validateChangeResult(dirty, response.results);
 
@@ -525,7 +536,13 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       const runUrl = `https://github.com/${owner}/${repo}/actions/runs/${process.env.GITHUB_RUN_ID}`;
       const body = `**OpenCode: failed**\n\nThe feedback was not applied because the automation failed. [View the run](${runUrl}) for details.`;
       try {
-        token = await getAppToken();
+        try {
+          token = await getAppToken();
+        } catch (error) {
+          console.warn(
+            `Unable to refresh the OpenCode App token while reporting failure; using the existing token: ${error instanceof Error ? error.message : error}`
+          );
+        }
         if (targets.length) {
           for (const target of targets) {
             await replyToTarget(token, owner, repo, prNumber, target, body);
