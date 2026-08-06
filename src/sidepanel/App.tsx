@@ -56,6 +56,7 @@ export default function App() {
         messages={chat.messages}
         promptsEnabled={pageReady}
         onPrompt={prompt => void chat.send(prompt)}
+        onRetry={messageId => void chat.retry(messageId)}
       />
       <Composer
         value={chat.input}

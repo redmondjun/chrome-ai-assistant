@@ -14,13 +14,13 @@ export function useChat(page: TabContent | null, researchOptions: ResearchOption
   const [conversations, setConversations] = useState<ChatConversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string>();
   const [input, setInput] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [activeMessageId, setActiveMessageId] = useState<string>();
+  const [activeMessageIds, setActiveMessageIds] = useState<string[]>([]);
   const [isHistoryLoaded, setIsHistoryLoaded] = useState(false);
   const [scope, setScope] = useState(ANONYMOUS_SCOPE);
   const [deepResearch, setDeepResearch] = useState(false);
   const activeConversation = conversations.find(chat => chat.id === activeConversationId);
   const messages = activeConversation?.messages || [];
+  const isLoading = activeMessageIds.length > 0;
 
   useEffect(() => {
     let active = true;
@@ -86,8 +86,9 @@ export function useChat(page: TabContent | null, researchOptions: ResearchOption
         ['queued', 'running'].includes(message.researchProgress?.status || '')
     );
     if (!runningResearch) return;
-    setIsLoading(true);
-    setActiveMessageId(runningResearch.id);
+    setActiveMessageIds(current =>
+      current.includes(runningResearch.id) ? current : [...current, runningResearch.id]
+    );
   }, [messages]);
 
   const updateMessage = useCallback(
@@ -115,8 +116,7 @@ export function useChat(page: TabContent | null, researchOptions: ResearchOption
         content: content ?? message.content,
         isStreaming: false,
       }));
-      setIsLoading(false);
-      setActiveMessageId(current => (current === messageId ? undefined : current));
+      setActiveMessageIds(current => current.filter(id => id !== messageId));
     },
     [updateMessage]
   );
@@ -169,10 +169,37 @@ export function useChat(page: TabContent | null, researchOptions: ResearchOption
             isStreaming: ['queued', 'running'].includes(message.progress.status),
           }));
           if (['paused', 'cancelled', 'completed', 'failed'].includes(message.progress.status)) {
-            setIsLoading(false);
+            setActiveMessageIds(current => current.filter(id => id !== message.messageId));
           } else {
-            setIsLoading(true);
-            setActiveMessageId(message.messageId);
+            setActiveMessageIds(current =>
+              current.includes(message.messageId) ? current : [...current, message.messageId]
+            );
+          }
+          break;
+        case 'AGENT_RUN_PROGRESS':
+          updateMessage(message.messageId, current => ({
+            ...current,
+            agentRun: message.progress,
+            researchProgress: current.researchProgress
+              ? {
+                  ...current.researchProgress,
+                  attemptId: message.progress.attemptId,
+                  health: message.progress.health,
+                  operationStartedAt: message.progress.operationStartedAt,
+                  lastHeartbeatAt: message.progress.lastHeartbeatAt,
+                  diagnosticId: message.progress.diagnosticId,
+                }
+              : current.researchProgress,
+            isStreaming: !['completed', 'failed', 'stopped', 'interrupted'].includes(
+              message.progress.status
+            ),
+          }));
+          if (['completed', 'failed', 'stopped', 'interrupted'].includes(message.progress.status)) {
+            setActiveMessageIds(current => current.filter(id => id !== message.messageId));
+          } else {
+            setActiveMessageIds(current =>
+              current.includes(message.messageId) ? current : [...current, message.messageId]
+            );
           }
           break;
         case 'STREAM_DONE':
@@ -204,6 +231,7 @@ export function useChat(page: TabContent | null, researchOptions: ResearchOption
 
       const userMessage = createMessage('user', question);
       const assistantMessage = createMessage('assistant', '', true);
+      assistantMessage.requestMode = deepResearch ? 'deep-research' : 'standard';
       setConversations(current =>
         current.map(chat =>
           chat.id === activeConversationId
@@ -217,8 +245,7 @@ export function useChat(page: TabContent | null, researchOptions: ResearchOption
         )
       );
       setInput('');
-      setIsLoading(true);
-      setActiveMessageId(assistantMessage.id);
+      setActiveMessageIds(current => [...current, assistantMessage.id]);
 
       try {
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -231,6 +258,13 @@ export function useChat(page: TabContent | null, researchOptions: ResearchOption
           tabId: tab?.id,
         });
         if (response?.error) throw new Error(response.error);
+        if (response?.attemptId) {
+          updateMessage(assistantMessage.id, message => ({
+            ...message,
+            requestMode: 'standard',
+            agentRun: response.progress,
+          }));
+        }
         if (response?.jobId) {
           updateMessage(assistantMessage.id, message => ({
             ...message,
@@ -256,8 +290,8 @@ export function useChat(page: TabContent | null, researchOptions: ResearchOption
   );
 
   const stop = useCallback(async () => {
-    if (!activeMessageId) return;
-    const messageId = activeMessageId;
+    const messageId = activeMessageIds.at(-1);
+    if (!messageId) return;
     const activeMessage = messages.find(message => message.id === messageId);
     if (activeMessage?.researchJobId) {
       try {
@@ -275,14 +309,68 @@ export function useChat(page: TabContent | null, researchOptions: ResearchOption
       content: message.content || 'Response stopped.',
       isStreaming: false,
     }));
-    setIsLoading(false);
-    setActiveMessageId(undefined);
+    setActiveMessageIds(current => current.filter(id => id !== messageId));
     try {
       await chrome.runtime.sendMessage({ type: 'STOP_GENERATION', messageId });
     } catch (error) {
       console.error('[chat]', 'Could not stop generation:', error);
     }
-  }, [activeMessageId, messages, updateMessage]);
+  }, [activeMessageIds, messages, updateMessage]);
+
+  const retry = useCallback(
+    async (messageId: string) => {
+      const index = messages.findIndex(message => message.id === messageId);
+      const failedMessage = messages[index];
+      const userMessage = [...messages.slice(0, index)]
+        .reverse()
+        .find(message => message.role === 'user');
+      if (!failedMessage || !userMessage || !page) return;
+      const assistantMessage = createMessage('assistant', '', true);
+      assistantMessage.requestMode =
+        failedMessage.requestMode || (failedMessage.researchJobId ? 'deep-research' : 'standard');
+      setConversations(current =>
+        current.map(chat =>
+          chat.id === activeConversationId
+            ? { ...chat, messages: [...chat.messages, assistantMessage], updatedAt: Date.now() }
+            : chat
+        )
+      );
+      setActiveMessageIds(current => [...current, assistantMessage.id]);
+      try {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        const response = await chrome.runtime.sendMessage({
+          type:
+            assistantMessage.requestMode === 'deep-research' ? 'START_RESEARCH' : 'RETRY_AGENT_RUN',
+          question: userMessage.content,
+          messageId: assistantMessage.id,
+          context: page,
+          history: messages,
+          tabId: tab?.id,
+          jobId: failedMessage.researchJobId,
+        });
+        if (response?.error) throw new Error(response.error);
+        updateMessage(assistantMessage.id, message => ({
+          ...message,
+          researchJobId: response.jobId,
+          researchProgress: response.progress,
+          agentRun: response.progress?.attemptId
+            ? {
+                attemptId: response.progress.attemptId,
+                status: 'running',
+                health: response.progress.health || 'healthy',
+                activity: response.progress.activity,
+                startedAt: Date.now(),
+                operationStartedAt: response.progress.operationStartedAt,
+                lastHeartbeatAt: response.progress.lastHeartbeatAt || Date.now(),
+              }
+            : response.progress,
+        }));
+      } catch (error) {
+        finishMessage(assistantMessage.id, formatChatError(error));
+      }
+    },
+    [activeConversationId, finishMessage, messages, page, updateMessage]
+  );
 
   const startNewConversation = useCallback(() => {
     const conversation = createConversation();
@@ -305,6 +393,7 @@ export function useChat(page: TabContent | null, researchOptions: ResearchOption
     setDeepResearch,
     send,
     stop,
+    retry,
   };
 }
 
@@ -335,5 +424,6 @@ function createMessage(
     content,
     timestamp: Date.now(),
     isStreaming,
+    requestMode: undefined,
   };
 }
