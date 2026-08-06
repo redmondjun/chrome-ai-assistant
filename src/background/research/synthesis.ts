@@ -1,5 +1,5 @@
 import type { ModelRouter } from '../api/router';
-import type { ResearchJob, ResearchTask } from '@/shared/types';
+import type { CompletionOptions, ResearchJob, ResearchTask } from '@/shared/types';
 
 const MAX_SUMMARIES_PER_CALL = 10;
 const LOCAL_INPUT_CHAR_LIMIT = 20000;
@@ -11,7 +11,8 @@ export async function summarizeDiscoveryBatch(
   question: string,
   tasks: ResearchTask[],
   localOnly: boolean,
-  signal: AbortSignal
+  signal: AbortSignal,
+  diagnostic?: CompletionOptions['diagnostic']
 ) {
   const inputs = tasks
     .filter(task => task.seedAssessment)
@@ -26,7 +27,8 @@ export async function summarizeDiscoveryBatch(
     localOnly,
     'Combine these seed assessments into a compact discovery summary. Preserve task IDs, source URLs, themes, evidence gaps, and which subjects need expansion.',
     1000,
-    signal
+    signal,
+    diagnostic
   );
 }
 
@@ -35,7 +37,8 @@ export async function summarizeFinalBatch(
   question: string,
   tasks: ResearchTask[],
   localOnly: boolean,
-  signal: AbortSignal
+  signal: AbortSignal,
+  diagnostic?: CompletionOptions['diagnostic']
 ) {
   const inputs = tasks
     .filter(task => task.report)
@@ -47,7 +50,8 @@ export async function summarizeFinalBatch(
     localOnly,
     'Combine these subject reports into a compact cited answer summary. Preserve task labels and source URLs, merge duplicate themes, and retain uncertainty.',
     1600,
-    signal
+    signal,
+    diagnostic
   );
 }
 
@@ -56,7 +60,8 @@ export async function synthesizeResearch(
   job: ResearchJob,
   localOnly: boolean,
   signal: AbortSignal,
-  onLevel?: (level: number, summaries: string[]) => Promise<void>
+  onLevel?: (level: number, summaries: string[]) => Promise<void>,
+  diagnostic?: CompletionOptions['diagnostic']
 ) {
   let summaries = (job.batchSummaries || [])
     .filter(summary => summary.kind === 'final')
@@ -76,7 +81,7 @@ export async function synthesizeResearch(
         job.question,
         { hasLinks: true, contentLength: group.join('\n\n---\n\n').length },
         `Merge these research summaries into a more compact cited summary for the user request. Preserve URLs, important evidence, disagreements, and uncertainty. Do not invent facts.\n\nUSER REQUEST:\n${job.question}\n\nSUMMARIES:\n${group.join('\n\n---\n\n')}`,
-        { temperature: 0.2, maxTokens: 1800, signal }
+        { temperature: 0.2, maxTokens: 1800, signal, diagnostic }
       );
       next.push(result.text);
     }
@@ -88,7 +93,7 @@ export async function synthesizeResearch(
     job.question,
     { hasLinks: true, contentLength: summaries[0].length },
     `Answer the user's request using the compact research summary below. Follow the requested output and tone, combine related findings, cite supporting URLs, and clearly label uncertain or missing evidence. Do not recommend exporting to Word, PDF, or another format unless the user explicitly requested an export.\n\nUSER REQUEST:\n${job.question}\n\nRESEARCH:\n${summaries[0]}`,
-    { temperature: 0.3, maxTokens: 4096, signal }
+    { temperature: 0.3, maxTokens: 4096, signal, diagnostic }
   );
   return final.text;
 }
@@ -100,7 +105,8 @@ async function reduceSummaries(
   localOnly: boolean,
   instruction: string,
   maxTokens: number,
-  signal: AbortSignal
+  signal: AbortSignal,
+  diagnostic?: CompletionOptions['diagnostic']
 ) {
   if (inputs.length === 0) return '';
   const groups = groupInputs(inputs, inputLimit(localOnly));
@@ -112,7 +118,7 @@ async function reduceSummaries(
       question,
       { hasLinks: true, contentLength: content.length },
       `${instruction}\n\nUSER REQUEST:\n${question}\n\nINPUT:\n${content}`,
-      { temperature: 0.2, maxTokens, signal }
+      { temperature: 0.2, maxTokens, signal, diagnostic }
     );
     summaries.push(result.text);
   }

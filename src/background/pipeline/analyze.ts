@@ -13,6 +13,7 @@ import type {
   LinkInfo,
   LinkDecision,
   ResearchConversationContext,
+  CompletionOptions,
 } from '@/shared/types';
 
 const LINK_SCORING_BATCH_SIZE = 10;
@@ -39,7 +40,8 @@ export async function analyzeWithReasoning(
   callbacks: AnalysisCallbacks,
   history: ChatMessage[] = [],
   signal?: AbortSignal,
-  researchContext?: ResearchConversationContext
+  researchContext?: ResearchConversationContext,
+  diagnostic?: CompletionOptions['diagnostic']
 ): Promise<void> {
   const startedAt = Date.now();
   const logStage = (stage: string, details: object = {}) =>
@@ -124,7 +126,9 @@ export async function analyzeWithReasoning(
       availableLinks,
       question,
       signal,
-      reportScoringProgress
+      reportScoringProgress,
+      1,
+      diagnostic
     );
 
     const scoredLinks = availableLinks.map((link, i) => ({ link, score: linkScores[i] }));
@@ -297,7 +301,9 @@ export async function analyzeWithReasoning(
               childLinks,
               question,
               signal,
-              reportScoringProgress
+              reportScoringProgress,
+              1,
+              diagnostic
             );
             const relevantChildren = childLinks
               .map((child, index) => ({ link: child, score: childScores[index], depth: depth + 1 }))
@@ -427,7 +433,7 @@ export async function analyzeWithReasoning(
         (researchContext?.summary.length || 0),
     },
     prompt,
-    { temperature: 0.7, maxTokens: 4096, signal }
+    { temperature: 0.7, maxTokens: 4096, signal, diagnostic }
   )) {
     callbacks.onChunk(result.chunk);
   }
@@ -470,7 +476,8 @@ async function classifyLinks(
   question: string,
   signal?: AbortSignal,
   onProgress?: (message: string) => void,
-  batchConcurrency = 1
+  batchConcurrency = 1,
+  diagnostic?: CompletionOptions['diagnostic']
 ): Promise<number[]> {
   if (links.length === 0) return [];
 
@@ -494,7 +501,8 @@ async function classifyLinks(
         question,
         batchLabel,
         signal,
-        onProgress
+        onProgress,
+        diagnostic
       );
       onProgress?.(`Finished scoring links ${batchLabel}.`);
     }
@@ -511,7 +519,8 @@ async function classifyLinkBatch(
   question: string,
   batchLabel: string,
   signal?: AbortSignal,
-  onProgress?: (message: string) => void
+  onProgress?: (message: string) => void,
+  diagnostic?: CompletionOptions['diagnostic']
 ): Promise<number[]> {
   const prompt = `Score each link 0-1 for relevance to: "${question}"
 
@@ -550,6 +559,7 @@ Return only JSON array: [0.9, 0.1, ...]`;
         temperature: 0.1,
         maxTokens: 256,
         signal: scoringController.signal,
+        diagnostic,
       }),
       timeout,
     ]);

@@ -2,7 +2,9 @@ import { fetchLinkContentInTab } from '../content/link-tab-fetcher';
 import { validateRetrievedPage } from '../content/retrieved-page';
 import { canonicalizeUrl, categorizeSource } from './link-policy';
 import { evaluateLinkSafety } from '@/shared/link-safety';
+import { heartbeatAgentRun, recordDiagnostic } from '../diagnostics';
 import type {
+  CompletionOptions,
   LinkInfo,
   ResearchEvidence,
   ResearchJob,
@@ -35,10 +37,11 @@ interface SourceRegistryOptions {
   budget: number;
   signal: AbortSignal;
   checkpoint: (task?: ResearchTask, activity?: string) => Promise<void>;
+  diagnostic?: CompletionOptions['diagnostic'];
 }
 
 export function createSourceRegistry(options: SourceRegistryOptions) {
-  const { job, budget, signal, checkpoint } = options;
+  const { job, budget, signal, checkpoint, diagnostic } = options;
   const activeFetches = new Map<string, Promise<RetrievedResearchSource>>();
 
   return async (task: ResearchTask, source: ResearchSourceInput) => {
@@ -121,7 +124,7 @@ export function createSourceRegistry(options: SourceRegistryOptions) {
     addTaskSource(task, key);
 
     const sourceRecord = record;
-    const fetchPromise = fetchAndRecord(sourceRecord, source, signal, checkpoint, task);
+    const fetchPromise = fetchAndRecord(sourceRecord, source, signal, checkpoint, task, diagnostic);
     activeFetches.set(key, fetchPromise);
     try {
       return await fetchPromise;
@@ -136,13 +139,33 @@ async function fetchAndRecord(
   source: ResearchSourceInput,
   signal: AbortSignal,
   checkpoint: SourceRegistryOptions['checkpoint'],
-  task: ResearchTask
+  task: ResearchTask,
+  diagnostic?: CompletionOptions['diagnostic']
 ): Promise<RetrievedResearchSource> {
   record.status = 'fetching';
   record.error = undefined;
   record.failureReason = undefined;
   record.updatedAt = Date.now();
   await checkpoint(task, `${task.label}: opening ${source.title || source.url}`);
+  if (diagnostic) {
+    await heartbeatAgentRun(diagnostic.attemptId, {
+      activity: 'Opening a research source.',
+      operation: 'source-fetch',
+      deadlineMs: 30_000,
+      taskId: task.id,
+    });
+    await recordDiagnostic({
+      level: 'info',
+      component: 'source-fetch',
+      event: 'source-started',
+      attemptId: diagnostic.attemptId,
+      messageId: diagnostic.messageId,
+      jobId: diagnostic.jobId,
+      taskId: task.id,
+      operation: 'source-fetch',
+      url: source.url,
+    });
+  }
 
   const fetched = await fetchLinkContentInTab(source.url, signal);
   if (!fetched.content) {
@@ -151,6 +174,26 @@ async function fetchAndRecord(
     record.failureReason = fetched.failureReason || 'retrieval-failed';
     record.updatedAt = Date.now();
     await checkpoint(task, `${task.label}: source failed`);
+    if (diagnostic) {
+      await heartbeatAgentRun(diagnostic.attemptId, {
+        activity: 'A research source failed.',
+        operation: 'research-worker',
+        deadlineMs: 0,
+        taskId: task.id,
+      });
+      await recordDiagnostic({
+        level: 'warn',
+        component: 'source-fetch',
+        event: 'source-failed',
+        attemptId: diagnostic.attemptId,
+        messageId: diagnostic.messageId,
+        jobId: diagnostic.jobId,
+        taskId: task.id,
+        operation: 'source-fetch',
+        url: source.url,
+        error: record.error,
+      });
+    }
     return resultError(record.error, record.failureReason);
   }
   const validation = validateRetrievedPage({
@@ -180,6 +223,25 @@ async function fetchAndRecord(
   record.failureReason = undefined;
   record.updatedAt = Date.now();
   await checkpoint(task, `${task.label}: read ${evidence.title}`);
+  if (diagnostic) {
+    await heartbeatAgentRun(diagnostic.attemptId, {
+      activity: 'Read a research source.',
+      operation: 'research-worker',
+      deadlineMs: 0,
+      taskId: task.id,
+    });
+    await recordDiagnostic({
+      level: 'info',
+      component: 'source-fetch',
+      event: 'source-completed',
+      attemptId: diagnostic.attemptId,
+      messageId: diagnostic.messageId,
+      jobId: diagnostic.jobId,
+      taskId: task.id,
+      operation: 'source-fetch',
+      url: evidence.url,
+    });
+  }
   return { evidence, links: fetched.links || [], cacheHit: false };
 }
 

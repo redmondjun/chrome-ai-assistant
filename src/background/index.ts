@@ -19,12 +19,25 @@ import { analyzeWithReasoning, AnalysisCallbacks } from './pipeline/analyze';
 import { getTabContent } from './content/tab-content';
 import { ResearchCoordinator, RESEARCH_RESUME_ALARM } from './research/coordinator';
 import { buildResearchConversationContext } from './research/context';
-import type { BackgroundMessage, ChatMessage, TabContent } from '@/shared/types';
+import {
+  checkForStalledRuns,
+  clearDiagnosticHistory,
+  DIAGNOSTIC_STALL_ALARM,
+  exportDiagnostics,
+  finishAgentRun,
+  getAgentRun,
+  heartbeatAgentRun,
+  reconcileInterruptedRuns,
+  recordDiagnostic,
+  startAgentRun,
+  toAgentRunProgress,
+} from './diagnostics';
+import type { AgentOperation, BackgroundMessage, ChatMessage, TabContent } from '@/shared/types';
 
 let router: ModelRouter | null = null;
 let routerInitialization: Promise<ModelRouter> | null = null;
 let currentContent: TabContent | null = null;
-const activeAnalyses = new Map<string, AbortController>();
+const activeAnalyses = new Map<string, { controller: AbortController; attemptId: string }>();
 
 function initializeRouter(): Promise<ModelRouter> {
   if (router) return Promise.resolve(router);
@@ -57,9 +70,14 @@ void initializeAccount().catch(error =>
   console.error('[account]', 'Initialization failed:', error)
 );
 void researchCoordinator.resumePendingJobs();
+void reconcileInterruptedRuns();
+chrome.alarms.create(DIAGNOSTIC_STALL_ALARM, { periodInMinutes: 1 });
 
 chrome.alarms.onAlarm.addListener(alarm => {
   if (alarm.name === RESEARCH_RESUME_ALARM) void researchCoordinator.resumePendingJobs();
+  if (alarm.name === DIAGNOSTIC_STALL_ALARM) {
+    void checkForStalledRuns();
+  }
 });
 
 chrome.runtime.onStartup.addListener(() => void researchCoordinator.resumePendingJobs());
@@ -88,58 +106,108 @@ chrome.runtime.onMessage.addListener((message: BackgroundMessage, sender, sendRe
           break;
         }
 
-        case 'ASK_QUESTION': {
+        case 'ASK_QUESTION':
+        case 'RETRY_AGENT_RUN': {
           if (!message.question) throw new Error('No question provided');
-          const activeRouter = await initializeRouter();
-
-          let content = message.context || currentContent;
-          if (!content) {
-            const tabId = message.tabId || sender.tab?.id;
-            if (!tabId) throw new Error('No tab ID');
-            content = await getTabContent(tabId);
-          }
-
-          const settings = await getSettings();
-          const researchContext = await getConversationResearchContext(message.history);
           const messageId = message.messageId;
           if (!messageId) throw new Error('No message ID');
+          const run = await startAgentRun({
+            kind: 'standard',
+            messageId,
+            activity: 'Preparing the request.',
+          });
+          await advanceRun(run.attemptId, 'Preparing the model.', 'router');
+          let activeRouter: ModelRouter;
+          let content = message.context || currentContent;
+          let settings;
+          let researchContext;
+          try {
+            activeRouter = await initializeRouter();
+            if (!content) {
+              await advanceRun(run.attemptId, 'Reading the active page.', 'content');
+              const tabId = message.tabId || sender.tab?.id;
+              if (!tabId) throw new Error('No tab ID');
+              content = await getTabContent(tabId);
+            }
+            settings = await getSettings();
+            researchContext = await getConversationResearchContext(message.history);
+          } catch (error) {
+            await finishAgentRun(run.attemptId, 'failed', error);
+            throw error;
+          }
           const controller = new AbortController();
-          activeAnalyses.get(messageId)?.abort('Replaced by a newer request.');
-          activeAnalyses.set(messageId, controller);
+          activeAnalyses.get(messageId)?.controller.abort('Replaced by a newer request.');
+          activeAnalyses.set(messageId, { controller, attemptId: run.attemptId });
           const startedAt = Date.now();
           console.info('[analysis]', 'request-started', { messageId });
+          let lastTokenHeartbeat = 0;
+          let receivedFirstToken = false;
 
           const callbacks: AnalysisCallbacks = {
             onChunk: chunk => {
-              chrome.runtime.sendMessage({
+              sendRuntimeMessage({
                 type: 'STREAM_CHUNK',
                 chunk,
                 messageId,
               });
+              const now = Date.now();
+              if (lastTokenHeartbeat === 0 || now - lastTokenHeartbeat >= 5000) {
+                lastTokenHeartbeat = now;
+                const activity = receivedFirstToken
+                  ? 'Generating the answer.'
+                  : 'Received the first model token.';
+                receivedFirstToken = true;
+                void advanceRun(run.attemptId, activity, 'model-request', 120_000);
+              }
             },
             onReasoning: step => {
-              chrome.runtime.sendMessage({
+              sendRuntimeMessage({
                 type: 'REASONING',
                 step,
                 messageId,
               });
+              void advanceRun(
+                run.attemptId,
+                activityForReasoning(step.type),
+                operationForReasoning(step.type)
+              );
             },
             onLinkVisit: visit => {
-              chrome.runtime.sendMessage({
+              sendRuntimeMessage({
                 type: 'LINK_VISIT',
                 visit,
                 messageId,
               });
+              void advanceRun(
+                run.attemptId,
+                visit.status === 'fetching'
+                  ? 'Opening a selected source.'
+                  : 'Finished processing a selected source.',
+                'source-fetch',
+                visit.status === 'fetching' ? 30_000 : 0
+              );
+              if (visit.status !== 'fetching') {
+                void recordDiagnostic({
+                  level: visit.status === 'failed' ? 'warn' : 'info',
+                  component: 'source-fetch',
+                  event: `source-${visit.status}`,
+                  attemptId: run.attemptId,
+                  messageId,
+                  operation: 'source-fetch',
+                  url: visit.url,
+                  error: visit.error,
+                });
+              }
             },
             onLinkDecision: decision => {
-              chrome.runtime.sendMessage({
+              sendRuntimeMessage({
                 type: 'LINK_DECISION',
                 decision,
                 messageId,
               });
             },
             onDone: () => {
-              chrome.runtime.sendMessage({
+              sendRuntimeMessage({
                 type: 'STREAM_DONE',
                 messageId,
               });
@@ -154,14 +222,19 @@ chrome.runtime.onMessage.addListener((message: BackgroundMessage, sender, sendRe
             callbacks,
             message.history,
             controller.signal,
-            researchContext
+            researchContext,
+            { attemptId: run.attemptId, messageId }
           )
+            .then(async () => {
+              await finishAgentRun(run.attemptId, 'completed');
+            })
             .catch(err => {
               if (controller.signal.aborted) {
                 console.info('[analysis]', 'request-stopped', {
                   messageId,
                   elapsedMs: Date.now() - startedAt,
                 });
+                void finishAgentRun(run.attemptId, 'stopped', controller.signal.reason);
                 return;
               }
               console.error('[analysis]', 'request-failed', {
@@ -169,22 +242,34 @@ chrome.runtime.onMessage.addListener((message: BackgroundMessage, sender, sendRe
                 elapsedMs: Date.now() - startedAt,
                 error: err instanceof Error ? err.message : String(err),
               });
-              chrome.runtime.sendMessage({
+              sendRuntimeMessage({
                 type: 'ERROR',
                 message: err instanceof Error ? err.message : String(err),
                 messageId,
               });
+              void finishAgentRun(run.attemptId, 'failed', err);
             })
             .finally(() => {
-              if (activeAnalyses.get(messageId) === controller) activeAnalyses.delete(messageId);
+              if (activeAnalyses.get(messageId)?.controller === controller)
+                activeAnalyses.delete(messageId);
             });
 
-          sendResponse({ ok: true });
+          const currentRun = (await getAgentRun(run.attemptId)) || run;
+          sendResponse({
+            ok: true,
+            attemptId: run.attemptId,
+            progress: toAgentRunProgress(currentRun),
+          });
           break;
         }
 
         case 'START_RESEARCH': {
           if (!message.question || !message.messageId) throw new Error('Missing research request.');
+          if (message.jobId) {
+            const job = await researchCoordinator.retryInParallel(message.jobId, message.messageId);
+            sendResponse({ ok: true, jobId: job.id, progress: job.progress });
+            break;
+          }
           let content = message.context || currentContent;
           if (!content) {
             const tabId = message.tabId || sender.tab?.id;
@@ -232,9 +317,26 @@ chrome.runtime.onMessage.addListener((message: BackgroundMessage, sender, sendRe
 
         case 'STOP_GENERATION': {
           const messageId = message.messageId;
-          const controller = messageId ? activeAnalyses.get(messageId) : undefined;
-          controller?.abort('Stopped by user.');
-          sendResponse({ ok: Boolean(controller) });
+          const active = messageId ? activeAnalyses.get(messageId) : undefined;
+          active?.controller.abort('Stopped by user.');
+          sendResponse({ ok: Boolean(active) });
+          break;
+        }
+
+        case 'GET_DIAGNOSTICS': {
+          const exported = await exportDiagnostics(await getSettings());
+          sendResponse({ export: exported });
+          break;
+        }
+
+        case 'CLEAR_DIAGNOSTICS': {
+          sendResponse({ ok: true, diagnostics: await clearDiagnosticHistory() });
+          break;
+        }
+
+        case 'GET_AGENT_RUN': {
+          if (!message.attemptId) throw new Error('No attempt ID.');
+          sendResponse({ run: await getAgentRun(message.attemptId) });
           break;
         }
 
@@ -360,3 +462,49 @@ chrome.sidePanel.setOptions({ enabled: true, path: 'sidepanel/index.html' });
 chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel.setOptions({ enabled: true, path: 'sidepanel/index.html' });
 });
+
+globalThis.addEventListener('error', event => {
+  void recordDiagnostic({
+    level: 'error',
+    component: 'service-worker',
+    event: 'uncaught-error',
+    error: event.error || event.message,
+  });
+});
+
+globalThis.addEventListener('unhandledrejection', event => {
+  void recordDiagnostic({
+    level: 'error',
+    component: 'service-worker',
+    event: 'unhandled-rejection',
+    error: event.reason,
+  });
+});
+
+async function advanceRun(
+  attemptId: string,
+  activity: string,
+  operation?: AgentOperation,
+  deadlineMs?: number
+) {
+  const run = await heartbeatAgentRun(attemptId, { activity, operation, deadlineMs });
+  return run;
+}
+
+function sendRuntimeMessage(message: unknown) {
+  void Promise.resolve(chrome.runtime.sendMessage(message)).catch(() => undefined);
+}
+
+function operationForReasoning(type: string): AgentOperation {
+  if (type === 'classify') return 'link-scoring';
+  if (type === 'fetch' || type === 'extract') return 'source-fetch';
+  return 'model-request';
+}
+
+function activityForReasoning(type: string) {
+  if (type === 'classify') return 'Deciding which sources are needed.';
+  if (type === 'fetch') return 'Fetching a selected source.';
+  if (type === 'extract') return 'Reading retrieved content.';
+  if (type === 'synthesize') return 'Synthesizing evidence.';
+  return 'Generating the answer.';
+}
