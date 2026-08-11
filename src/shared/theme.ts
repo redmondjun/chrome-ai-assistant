@@ -1,12 +1,12 @@
 import { useEffect } from 'react';
 
-export type ThemePreference = 'light' | 'dark' | 'system';
+export type ThemePreference = 'light' | 'dark' | 'system' | 'confluence';
 
 export function applyTheme(preference: ThemePreference) {
   const systemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
   const resolved = preference === 'system' ? (systemDark ? 'dark' : 'light') : preference;
   document.documentElement.dataset.theme = resolved;
-  document.documentElement.style.colorScheme = resolved;
+  document.documentElement.style.colorScheme = resolved === 'dark' ? 'dark' : 'light';
 }
 
 export function useTheme(preference: ThemePreference) {

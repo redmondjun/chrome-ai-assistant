@@ -32,6 +32,22 @@
     --focus: rgba(110, 168, 254, 0.35);
   }
 
+  :root[data-theme='confluence'] {
+    --canvas: #f4f5f7;
+    --surface: #fff;
+    --elevated: #fff;
+    --text: #172b4d;
+    --muted: #5e6c84;
+    --border: #dfe1e6;
+    --accent: #0052cc;
+    --accent-hover: #0065ff;
+    --accent-soft: #deebff;
+    --success: #00875a;
+    --warning: #ff991f;
+    --danger: #de350b;
+    --focus: rgba(38, 132, 255, 0.3);
+  }
+
   * {
     box-sizing: border-box;
   }

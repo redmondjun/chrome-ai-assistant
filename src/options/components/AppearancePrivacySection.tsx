@@ -27,6 +27,7 @@ export function AppearancePrivacySection({ ui, privacy, onUiChange, onPrivacyCha
           <option value="system">System</option>
           <option value="light">Light</option>
           <option value="dark">Dark</option>
+          <option value="confluence">Confluence</option>
         </select>
       </Field>
 

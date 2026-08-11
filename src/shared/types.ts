@@ -275,7 +275,7 @@ export interface StorageSettings {
   links: LinkFollowSettings;
   research: ResearchSettings;
   ui: {
-    theme: 'light' | 'dark' | 'system';
+    theme: 'light' | 'dark' | 'system' | 'confluence';
     showReasoning: boolean;
     showLinks: boolean;
     streaming: boolean;

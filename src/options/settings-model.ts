@@ -25,7 +25,7 @@ export interface ExtensionSettings {
     cloudNoticeAccepted: boolean;
   };
   ui: {
-    theme: 'light' | 'dark' | 'system';
+    theme: 'light' | 'dark' | 'system' | 'confluence';
     showReasoning: boolean;
     showLinks: boolean;
     streaming: boolean;

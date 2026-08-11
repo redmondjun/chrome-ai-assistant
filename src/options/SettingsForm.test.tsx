@@ -101,6 +101,25 @@ describe('SettingsForm', () => {
     expect(await screen.findByText('Settings saved.')).toBeInTheDocument();
   });
 
+  it('selects and persists the Confluence theme', async () => {
+    render(<SettingsForm />);
+
+    await waitFor(() => expect(document.documentElement.dataset.theme).toBe('dark'));
+    fireEvent.change(screen.getByLabelText('Theme'), { target: { value: 'confluence' } });
+    expect(document.documentElement.dataset.theme).toBe('confluence');
+    expect(document.documentElement.style.colorScheme).toBe('light');
+
+    fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+    await waitFor(() =>
+      expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({
+        type: 'UPDATE_SETTINGS',
+        settings: expect.objectContaining({
+          ui: expect.objectContaining({ theme: 'confluence' }),
+        }),
+      })
+    );
+  });
+
   it('shows a contrast-safe local-model warning when no model is stored', async () => {
     render(<SettingsForm />);
 

@@ -2,7 +2,7 @@ import React from 'react';
 import { act, render } from '@testing-library/react';
 import { useTheme } from './theme';
 
-function Harness({ theme }: { theme: 'light' | 'dark' | 'system' }) {
+function Harness({ theme }: { theme: 'light' | 'dark' | 'system' | 'confluence' }) {
   useTheme(theme);
   return null;
 }
@@ -13,6 +13,12 @@ describe('theme', () => {
     expect(document.documentElement.dataset.theme).toBe('light');
     view.rerender(<Harness theme="dark" />);
     expect(document.documentElement.dataset.theme).toBe('dark');
+  });
+
+  it('applies Confluence as an explicit light theme', () => {
+    render(<Harness theme="confluence" />);
+    expect(document.documentElement.dataset.theme).toBe('confluence');
+    expect(document.documentElement.style.colorScheme).toBe('light');
   });
 
   it('tracks system theme changes', () => {
