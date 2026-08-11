@@ -5,6 +5,7 @@ import { BackupRestoreSection } from './components/BackupRestoreSection';
 import { LinkSettingsSection } from './components/LinkSettingsSection';
 import { ModelSettingsSection } from './components/ModelSettingsSection';
 import { ResearchSettingsSection } from './components/ResearchSettingsSection';
+import { DiagnosticsSection } from './components/DiagnosticsSection';
 import { useSettingsForm } from './useSettingsForm';
 
 export function SettingsForm() {
@@ -58,6 +59,7 @@ export function SettingsForm() {
           onUiChange={ui => setSettings(current => ({ ...current, ui }))}
           onPrivacyChange={privacy => setSettings(current => ({ ...current, privacy }))}
         />
+        <DiagnosticsSection />
         <BackupRestoreSection
           onExport={exportSettings}
           onImport={importSettings}

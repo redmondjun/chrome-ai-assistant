@@ -9,6 +9,7 @@ import type {
   ResearchSourceDecision,
   ResearchTask,
   StorageSettings,
+  CompletionOptions,
 } from '@/shared/types';
 import type { ResearchSourceInput, RetrievedResearchSource } from './source-registry';
 import { evaluateLinkSafety } from '@/shared/link-safety';
@@ -30,6 +31,7 @@ interface WorkerOptions {
   getEvidence: (task: ResearchTask) => ResearchEvidence[];
   checkpoint: (task: ResearchTask, activity?: string) => Promise<void>;
   signal: AbortSignal;
+  diagnostic?: CompletionOptions['diagnostic'];
 }
 
 export async function scanResearchSeed(options: WorkerOptions) {
@@ -63,7 +65,8 @@ export async function finalizeResearchSubject(
   options: WorkerOptions,
   expansionItems: ResearchExpansionItem[]
 ) {
-  const { task, retrieveSource, getEvidence, checkpoint, router, question, signal } = options;
+  const { task, retrieveSource, getEvidence, checkpoint, router, question, signal, diagnostic } =
+    options;
   task.status = 'running';
   task.expansionStatus = expansionItems.length > 0 ? 'running' : 'skipped';
 
@@ -97,7 +100,12 @@ export async function finalizeResearchSubject(
     question,
     { hasLinks: true, contentLength: evidencePrompt.length },
     `Analyze the subject "${task.label}" for the user's request. Produce a compact evidence report, cite source URLs, distinguish facts from uncertainty, and do not invent metrics.\n\nUSER REQUEST:\n${question}\n\nEVIDENCE:\n${evidencePrompt}`,
-    { temperature: 0.2, maxTokens: 900, signal }
+    {
+      temperature: 0.2,
+      maxTokens: 900,
+      signal,
+      diagnostic: diagnostic ? { ...diagnostic, taskId: task.id } : undefined,
+    }
   );
   task.report = result.text;
   task.expansionStatus = expansionItems.length > 0 ? 'completed' : 'skipped';
@@ -134,7 +142,10 @@ async function scoreSeedCandidates(options: WorkerOptions, links: LinkInfo[]) {
     router,
     candidates,
     `${question}\nResearch subject: ${task.label}`,
-    signal
+    signal,
+    undefined,
+    1,
+    options.diagnostic ? { ...options.diagnostic, taskId: task.id } : undefined
   );
   const ranked = candidates
     .map((link, index) => ({
@@ -160,7 +171,7 @@ async function scoreSeedCandidates(options: WorkerOptions, links: LinkInfo[]) {
 }
 
 async function createSeedAssessment(
-  { router, task, question, signal }: WorkerOptions,
+  { router, task, question, signal, diagnostic }: WorkerOptions,
   evidence: ResearchEvidence,
   candidates: ResearchTask['pendingSources']
 ): Promise<ResearchSeedAssessment> {
@@ -168,7 +179,12 @@ async function createSeedAssessment(
     question,
     { hasLinks: candidates.length > 0, contentLength: evidence.excerpt.length },
     `Assess this research seed for the user's request. Return JSON only with: summary (string), relevance (0-1), themes (string array), evidenceGaps (string array), expansionNeeded (boolean). Expansion is needed only when related sources could materially fill an evidence gap.\n\nUSER REQUEST:\n${question}\n\nSUBJECT: ${task.label}\nURL: ${evidence.url}\nCONTENT:\n${evidence.excerpt}`,
-    { temperature: 0.1, maxTokens: 500, signal }
+    {
+      temperature: 0.1,
+      maxTokens: 500,
+      signal,
+      diagnostic: diagnostic ? { ...diagnostic, taskId: task.id } : undefined,
+    }
   );
   return parseSeedAssessment(result.text, evidence, candidates.length > 0);
 }

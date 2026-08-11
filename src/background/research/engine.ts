@@ -16,6 +16,7 @@ import type {
   ResearchTask,
   StorageSettings,
   TabContent,
+  CompletionOptions,
 } from '@/shared/types';
 
 type ResearchRouter = Pick<ModelRouter, 'complete'>;
@@ -97,10 +98,17 @@ export async function runResearchJob(
   jobId: string,
   settings: StorageSettings,
   callbacks: ResearchCallbacks,
-  signal: AbortSignal
+  signal: AbortSignal,
+  diagnostic?: CompletionOptions['diagnostic']
 ): Promise<void> {
   const job = await getResearchJob(jobId);
   if (!job || job.status === 'cancelled' || job.status === 'completed') return;
+
+  if (diagnostic) {
+    job.progress.attemptId = diagnostic.attemptId;
+    job.progress.health = 'healthy';
+    job.progress.lastHeartbeatAt = Date.now();
+  }
 
   prepareJob(job, settings);
   const checkpoint = createResearchCheckpoint(job, callbacks);
@@ -109,6 +117,7 @@ export async function runResearchJob(
     budget: job.sourceBudget || settings.research.maxUniqueSourcesPerJob,
     signal,
     checkpoint,
+    diagnostic,
   });
   const getEvidence = (task: ResearchTask) =>
     (task.sourceKeys || [])
@@ -117,7 +126,7 @@ export async function runResearchJob(
 
   try {
     await checkpoint(undefined, 'Selecting research subjects...');
-    await selectRelevantTasks(router, job, settings, checkpoint, signal);
+    await selectRelevantTasks(router, job, settings, checkpoint, signal, diagnostic);
     const selectedTasks = job.tasks.filter(task => task.status !== 'skipped');
     if (selectedTasks.length === 0) {
       job.partialAnswer = createPartialResearchAnswer(job);
@@ -141,6 +150,7 @@ export async function runResearchJob(
       getEvidence,
       checkpoint,
       signal,
+      diagnostic,
     });
     throwIfAborted(signal);
 
@@ -158,10 +168,11 @@ export async function runResearchJob(
       getEvidence,
       checkpoint,
       signal,
+      diagnostic,
     });
     throwIfAborted(signal);
 
-    await runBatchSynthesis(router, job, selectedTasks, settings, checkpoint, signal);
+    await runBatchSynthesis(router, job, selectedTasks, settings, checkpoint, signal, diagnostic);
     throwIfAborted(signal);
 
     setResearchStage(job, 'final-synthesis');
@@ -174,7 +185,8 @@ export async function runResearchJob(
       async (level, summaries) => {
         job.synthesisState = { level, summaries };
         await checkpoint(undefined, `Combining research summaries · level ${level}`);
-      }
+      },
+      diagnostic
     );
     const failedSubjects = job.tasks.filter(task => task.status === 'failed').length;
     if (failedSubjects > 0) {
@@ -214,6 +226,7 @@ interface StageOptions {
   getEvidence: (task: ResearchTask) => ResearchEvidence[];
   checkpoint: ResearchCheckpoint;
   signal: AbortSignal;
+  diagnostic?: CompletionOptions['diagnostic'];
 }
 
 async function runSeedStage(options: StageOptions) {
@@ -246,7 +259,8 @@ async function runSeedStage(options: StageOptions) {
         job.question,
         batches[index],
         settings.privacy.localOnly,
-        signal
+        signal,
+        options.diagnostic
       );
       addBatchSummary(job, index, 'discovery', batches[index], summary);
       await checkpoint(undefined, `Saved discovery summary for batch ${index + 1}.`);
@@ -288,7 +302,8 @@ async function runBatchSynthesis(
   tasks: ResearchTask[],
   settings: StorageSettings,
   checkpoint: ResearchCheckpoint,
-  signal: AbortSignal
+  signal: AbortSignal,
+  diagnostic?: CompletionOptions['diagnostic']
 ) {
   setResearchStage(job, 'batch-synthesis');
   const completed = tasks.filter(task => task.status === 'completed' && task.report);
@@ -304,7 +319,8 @@ async function runBatchSynthesis(
       job.question,
       batches[index],
       settings.privacy.localOnly,
-      signal
+      signal,
+      diagnostic
     );
     addBatchSummary(job, index, 'final', batches[index], summary);
     job.partialAnswer = createPartialResearchAnswer(job);
@@ -317,7 +333,8 @@ async function selectRelevantTasks(
   job: ResearchJob,
   settings: StorageSettings,
   checkpoint: ResearchCheckpoint,
-  signal: AbortSignal
+  signal: AbortSignal,
+  diagnostic?: CompletionOptions['diagnostic']
 ) {
   const candidates = job.tasks.filter(
     task =>
@@ -340,7 +357,8 @@ async function selectRelevantTasks(
         job.question,
         signal,
         thought => void checkpoint(undefined, thought),
-        settings.research.workerConcurrency
+        settings.research.workerConcurrency,
+        diagnostic
       );
   candidates.forEach((task, index) => {
     const score = scores[index];

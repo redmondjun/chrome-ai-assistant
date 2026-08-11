@@ -3,10 +3,10 @@ import type { ChatMessage, LinkVisit } from '@/shared/types';
 
 export function StreamingProgress({ message }: { message: ChatMessage }) {
   const [now, setNow] = useState(Date.now);
-  const [lastActivityAt, setLastActivityAt] = useState(Date.now);
+  const [fallbackActivityAt, setFallbackActivityAt] = useState(Date.now);
 
   useEffect(() => {
-    setLastActivityAt(Date.now());
+    setFallbackActivityAt(Date.now());
   }, [message.content, message.reasoning?.length, message.linkVisits?.length]);
 
   useEffect(() => {
@@ -18,7 +18,9 @@ export function StreamingProgress({ message }: { message: ChatMessage }) {
   const activeVisit = visits.find(visit => visit.status === 'fetching');
   const successCount = visits.filter(visit => visit.status === 'success').length;
   const failedCount = visits.filter(visit => visit.status === 'failed').length;
-  const elapsedSeconds = Math.max(0, Math.floor((now - message.timestamp) / 1000));
+  const startedAt = message.agentRun?.startedAt || message.timestamp;
+  const lastActivityAt = message.agentRun?.lastHeartbeatAt || fallbackActivityAt;
+  const elapsedSeconds = Math.max(0, Math.floor((now - startedAt) / 1000));
   const idleSeconds = Math.max(0, Math.floor((now - lastActivityAt) / 1000));
   const activity = getCurrentActivity(message, activeVisit);
 
