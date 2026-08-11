@@ -5,12 +5,17 @@ import { fileURLToPath } from 'node:url';
 const TRUSTED_ASSOCIATIONS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
 const REVIEW_MODEL = 'nvidia/nvidia/nemotron-3-super-120b-a12b';
 const MAX_RECONCILIATION_ROUNDS = 3;
+const FALLBACK_MODEL = 'nvidia/minimaxai/minimax-m3';
 const MODELS = {
-  default: 'nvidia/deepseek-ai/deepseek-v4-pro',
+  default: 'nvidia/z-ai/glm-5.2',
   ultra: 'nvidia/nvidia/nemotron-3-ultra-550b-a55b',
   super: 'nvidia/nvidia/nemotron-3-super-120b-a12b',
 };
 let failureContext = null;
+
+export function modelCandidates(model) {
+  return model === MODELS.default ? [model, FALLBACK_MODEL] : [model];
+}
 
 export function isTrustedAssociation(value) {
   return TRUSTED_ASSOCIATIONS.has(value);
@@ -344,35 +349,42 @@ function runOpenCode(model, prompt, targetIds) {
   const promptFile = '.opencode-address-prompt.md';
   writeFileSync(promptFile, prompt, { mode: 0o600 });
   try {
-    const result = spawnSync(
-      'opencode',
-      [
-        'run',
-        `Address the review feedback using the attached context. Use apply ONLY when you made a real working-tree edit; no edit means disagree or clarify. Return ONLY JSON with exactly these comment IDs: ${targetIds.join(', ')}. Required shape: {"results":[{"comment_id":123,"decision":"apply|disagree|clarify","reply":"concise explanation"}],"commit_summary":"short imperative summary"}`,
-        '--auto',
-        '--format',
-        'json',
-        '--agent',
-        'pr-comment-fixer',
-        '--model',
-        model,
-        '--file',
-        promptFile,
-      ],
-      {
-        encoding: 'utf8',
-        env: childEnv,
-        maxBuffer: 20 * 1024 * 1024,
-        timeout: 15 * 60 * 1000,
-      }
-    );
-    if (result.error) throw result.error;
-    if (result.status !== 0) {
-      throw new Error(
-        `OpenCode failed: ${result.stderr || result.stdout || `exit ${result.status}`}`
+    const candidates = modelCandidates(model);
+    let failure = null;
+    for (const [index, candidate] of candidates.entries()) {
+      const result = spawnSync(
+        'opencode',
+        [
+          'run',
+          `Address the review feedback using the attached context. Use apply ONLY when you made a real working-tree edit; no edit means disagree or clarify. Return ONLY JSON with exactly these comment IDs: ${targetIds.join(', ')}. Required shape: {"results":[{"comment_id":123,"decision":"apply|disagree|clarify","reply":"concise explanation"}],"commit_summary":"short imperative summary"}`,
+          '--auto',
+          '--format',
+          'json',
+          '--agent',
+          'pr-comment-fixer',
+          '--model',
+          candidate,
+          '--file',
+          promptFile,
+        ],
+        {
+          encoding: 'utf8',
+          env: childEnv,
+          maxBuffer: 20 * 1024 * 1024,
+          timeout: 15 * 60 * 1000,
+        }
       );
+      if (!result.error && result.status === 0) return result.stdout;
+      failure =
+        result.error ??
+        new Error(`OpenCode failed: ${result.stderr || result.stdout || `exit ${result.status}`}`);
+      if (index < candidates.length - 1) {
+        console.warn(
+          `OpenCode model ${candidate} failed; retrying with ${candidates[index + 1]}.`
+        );
+      }
     }
-    return result.stdout;
+    throw failure;
   } finally {
     unlinkSync(promptFile);
   }

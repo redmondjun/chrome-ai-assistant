@@ -8,6 +8,7 @@ import {
   isAutomatedFeedback,
   isOpenCodeChildPr,
   isTrustedAssociation,
+  modelCandidates,
   parseCommand,
   parseCommentUrl,
   validateChangeResult,
@@ -35,9 +36,19 @@ test('parses address scope and model flags', () => {
     parseCommand('/opencode address --super').model,
     'nvidia/nvidia/nemotron-3-super-120b-a12b'
   );
-  assert.equal(parseCommand('/oc address').model, 'nvidia/deepseek-ai/deepseek-v4-pro');
+  assert.equal(parseCommand('/oc address').model, 'nvidia/z-ai/glm-5.2');
   assert.equal(parseCommand('please /oc address'), null);
   assert.equal(parseCommand('/oc review this'), null);
+});
+
+test('falls back from GLM to MiniMax without changing explicit model selections', () => {
+  assert.deepEqual(modelCandidates('nvidia/z-ai/glm-5.2'), [
+    'nvidia/z-ai/glm-5.2',
+    'nvidia/minimaxai/minimax-m3',
+  ]);
+  assert.deepEqual(modelCandidates('nvidia/nvidia/nemotron-3-super-120b-a12b'), [
+    'nvidia/nvidia/nemotron-3-super-120b-a12b',
+  ]);
 });
 
 test('parses top-level and inline GitHub comment URLs', () => {
