@@ -44,6 +44,17 @@
     }
   }
 
+  .page-attachments-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+
+    button {
+      padding: 4px 8px;
+      font-size: 11px;
+    }
+  }
+
   .open-tab-list,
   .saved-page-list {
     display: grid;

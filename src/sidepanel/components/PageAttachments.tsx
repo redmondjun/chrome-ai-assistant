@@ -108,6 +108,12 @@ export function PageAttachments({
       </button>
       {open && (
         <div className="page-attachments-panel" aria-label="Attach pages">
+          <div className="page-attachments-heading">
+            <strong>Attach pages</strong>
+            <button type="button" aria-label="Close attach pages" onClick={() => setOpen(false)}>
+              Close
+            </button>
+          </div>
           <form
             className="page-url-form"
             onSubmit={event => {

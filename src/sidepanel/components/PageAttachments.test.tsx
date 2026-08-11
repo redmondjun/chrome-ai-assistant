@@ -37,6 +37,16 @@ async function renderAttachments(
 describe('PageAttachments', () => {
   beforeEach(() => jest.clearAllMocks());
 
+  it('closes the attachment panel from inside the panel', async () => {
+    (chrome.tabs.query as jest.Mock).mockResolvedValue([]);
+    await renderAttachments();
+    expect(screen.getByLabelText('Attach pages')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close attach pages' }));
+
+    expect(screen.queryByLabelText('Attach pages')).not.toBeInTheDocument();
+  });
+
   it('adds readable open tabs to the saved page library', async () => {
     const tabContent: TabContent = {
       url: 'https://wiki.example.com/tickets',
