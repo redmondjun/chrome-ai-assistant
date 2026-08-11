@@ -83,6 +83,7 @@ remain queued in local storage and synchronize after local-only mode is disabled
 Use **Attach pages** in the side panel when a request needs context from more than the active tab.
 
 - Choose another readable open tab or paste an HTTP(S) URL.
+- Close the attachment panel with **Close** in its top-right corner, or click **Attach pages** again.
 - Remembered pages remain in the current Chrome profile after Chrome restarts.
 - Select remembered pages independently for each conversation. Clearing a selection detaches the
   page without deleting it from the remembered-page library.
@@ -106,13 +107,18 @@ in the Console:
 
 ```js
 (async () => {
-  const { 'chrome-ai-conversations': chats = [], 'chrome-ai-active-conversation': activeChatId } =
-    await chrome.storage.local.get(['chrome-ai-conversations', 'chrome-ai-active-conversation']);
+  const storage = await chrome.storage.local.get(null);
+  const account = storage['chrome-ai-account-state'];
+  const scope = account?.user?.id || 'anonymous';
+  const chats =
+    storage[`chrome-ai-conversations:${scope}`] || storage['chrome-ai-conversations'] || [];
+  const activeChatId =
+    storage[`chrome-ai-active-conversation:${scope}`] || storage['chrome-ai-active-conversation'];
 
-  const activeChat = chats.find(chat => chat.id === activeChatId);
+  const activeChat = chats.find(chat => chat.id === activeChatId) || chats[0];
 
   if (!activeChat) {
-    console.error('No active chat found.');
+    console.error(`No chats found for storage scope "${scope}".`);
     return;
   }
 
@@ -127,6 +133,10 @@ in the Console:
   }
 })();
 ```
+
+Chats are stored under account-scoped keys. Signed-out chats use the `anonymous` scope; signed-in
+chats use the account's user ID. The exporter above determines that scope automatically and falls
+back to the legacy unscoped keys for older installations.
 
 Chat exports can contain sensitive page text and retrieved internal-source excerpts. Redact that
 data before sharing the JSON outside your organization.
