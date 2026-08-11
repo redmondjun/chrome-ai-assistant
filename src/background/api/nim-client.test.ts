@@ -200,6 +200,8 @@ describe('NIMClient', () => {
       expect(client.getModelId('nemotron-3-nano')).toBe('nvidia/nemotron-3-nano-30b-a3b');
       expect(client.getModelId('nemotron-3-super')).toBe('nvidia/nemotron-3-super-120b-a12b');
       expect(client.getModelId('nemotron-3-ultra')).toBe('nvidia/nemotron-3-ultra-550b-a55b');
+      expect(client.getModelId('glm-5.2')).toBe('z-ai/glm-5.2');
+      expect(client.getModelId('minimax-m3')).toBe('minimaxai/minimax-m3');
     });
 
     it('passes through unknown models', () => {

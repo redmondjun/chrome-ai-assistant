@@ -306,11 +306,11 @@ describe('side panel UI', () => {
       />
     );
 
-    fireEvent.change(screen.getByLabelText(/ai model/i), { target: { value: 'nemotron-3-super' } });
+    fireEvent.change(screen.getByLabelText(/ai model/i), { target: { value: 'glm-5.2' } });
     fireEvent.click(screen.getByRole('button', { name: /open settings/i }));
     fireEvent.click(screen.getByRole('button', { name: /retry/i }));
 
-    expect(onModelChange).toHaveBeenCalledWith('nemotron-3-super');
+    expect(onModelChange).toHaveBeenCalledWith('glm-5.2');
     expect(onOpenSettings).toHaveBeenCalledTimes(1);
     expect(onRetry).toHaveBeenCalledTimes(1);
   });
