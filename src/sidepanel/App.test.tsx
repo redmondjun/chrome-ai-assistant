@@ -329,6 +329,107 @@ describe('side panel App', () => {
     expect(screen.queryByText('Error: Error: Router not initialized')).not.toBeInTheDocument();
   });
 
+  it('preserves a partial answer when its response stream fails', async () => {
+    render(<App />);
+
+    expect(await screen.findByText('Example article')).toBeInTheDocument();
+    fireEvent.change(screen.getByRole('textbox', { name: /ask about this page/i }), {
+      target: { value: 'Explain the result' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /send message/i }));
+
+    const ask = await waitFor(() => {
+      const request = (chrome.runtime.sendMessage as jest.Mock).mock.calls
+        .map(([message]) => message)
+        .find(message => message.type === 'ASK_QUESTION');
+      expect(request).toBeDefined();
+      return request;
+    });
+
+    act(() =>
+      dispatchRuntimeMessage({
+        type: 'STREAM_CHUNK',
+        messageId: ask.messageId,
+        chunk: 'The answer generated before the connection failed.',
+      })
+    );
+    act(() =>
+      dispatchRuntimeMessage({
+        type: 'ERROR',
+        messageId: ask.messageId,
+        message: 'BodyStreamBuffer was aborted',
+      })
+    );
+
+    expect(
+      screen.getByText(
+        /The answer generated before the connection failed\.\s+Error: BodyStreamBuffer was aborted/
+      )
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(chrome.storage.local.set).toHaveBeenCalledWith(
+        expect.objectContaining({
+          'chrome-ai-conversations:anonymous': expect.arrayContaining([
+            expect.objectContaining({
+              messages: expect.arrayContaining([
+                expect.objectContaining({
+                  role: 'assistant',
+                  content:
+                    'The answer generated before the connection failed.\n\nError: BodyStreamBuffer was aborted',
+                  isStreaming: false,
+                }),
+              ]),
+            }),
+          ]),
+        })
+      )
+    );
+  });
+
+  it('persists an interrupted snapshot while an answer is streaming', async () => {
+    render(<App />);
+
+    expect(await screen.findByText('Example article')).toBeInTheDocument();
+    fireEvent.change(screen.getByRole('textbox', { name: /ask about this page/i }), {
+      target: { value: 'Keep this response' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /send message/i }));
+
+    const ask = await waitFor(() => {
+      const request = (chrome.runtime.sendMessage as jest.Mock).mock.calls
+        .map(([message]) => message)
+        .find(message => message.type === 'ASK_QUESTION');
+      expect(request).toBeDefined();
+      return request;
+    });
+
+    act(() =>
+      dispatchRuntimeMessage({
+        type: 'STREAM_CHUNK',
+        messageId: ask.messageId,
+        chunk: 'A partial answer worth keeping.',
+      })
+    );
+
+    await waitFor(() =>
+      expect(chrome.storage.local.set).toHaveBeenCalledWith(
+        expect.objectContaining({
+          'chrome-ai-conversations:anonymous': expect.arrayContaining([
+            expect.objectContaining({
+              messages: expect.arrayContaining([
+                expect.objectContaining({
+                  role: 'assistant',
+                  content: 'A partial answer worth keeping.',
+                  isStreaming: false,
+                }),
+              ]),
+            }),
+          ]),
+        })
+      )
+    );
+  });
+
   it('shows a readable page error and retries successfully', async () => {
     let tabRequest = 0;
     (chrome.runtime.sendMessage as jest.Mock).mockImplementation(async message => {

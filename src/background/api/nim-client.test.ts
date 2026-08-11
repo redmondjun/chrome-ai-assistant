@@ -201,6 +201,35 @@ describe('NIMClient', () => {
         'NIM API error (429 Too Many Requests): Rate limited'
       );
     });
+
+    it('reports the abort reason instead of Chrome stream internals', async () => {
+      const controller = new AbortController();
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        body: {
+          getReader: () => ({
+            read: () =>
+              new Promise((_, reject) => {
+                controller.signal.addEventListener('abort', () =>
+                  reject(new Error('BodyStreamBuffer was aborted'))
+                );
+              }),
+            cancel: jest.fn().mockResolvedValue(undefined),
+            releaseLock: jest.fn(),
+          }),
+        },
+      });
+
+      const generator = client.streamChatCompletion(
+        { model: 'nemotron-3-nano', messages: [], stream: true },
+        controller.signal
+      );
+      const pendingChunk = generator.next();
+      await Promise.resolve();
+      controller.abort(new DOMException('The AI response timed out.', 'TimeoutError'));
+
+      await expect(pendingChunk).rejects.toThrow('The AI response timed out.');
+    });
   });
 
   describe('testConnection', () => {

@@ -173,6 +173,9 @@ export class NIMClient {
             }
           }
         }
+      } catch (error) {
+        if (requestSignal.signal.aborted) throw requestSignal.signal.reason;
+        throw error;
       } finally {
         await reader.cancel?.().catch(() => undefined);
         reader.releaseLock();

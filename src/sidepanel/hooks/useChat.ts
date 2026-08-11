@@ -112,7 +112,9 @@ export function useChat(page: TabContent | null, researchOptions: ResearchOption
     (messageId: string, content?: string) => {
       updateMessage(messageId, message => ({
         ...message,
-        content: content ?? message.content,
+        content: content
+          ? [message.content, content].filter(Boolean).join('\n\n')
+          : message.content,
         isStreaming: false,
       }));
       setIsLoading(false);

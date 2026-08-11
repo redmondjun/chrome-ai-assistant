@@ -43,8 +43,15 @@ export function saveChatState(
     [conversationKey(scope)]: conversations.map(chat => ({
       ...chat,
       messages: chat.messages
-        .filter(message => !message.isStreaming || message.researchJobId)
-        .map(message => (message.researchJobId ? { ...message, isStreaming: false } : message))
+        .map(message =>
+          message.isStreaming
+            ? {
+                ...message,
+                content: message.content || (message.researchJobId ? '' : 'Response interrupted.'),
+                isStreaming: false,
+              }
+            : message
+        )
         .slice(-MAX_STORED_MESSAGES),
     })),
     [activeConversationKey(scope)]: activeConversationId,
