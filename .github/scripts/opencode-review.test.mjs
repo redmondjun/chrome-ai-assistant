@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  describeOpenCodeFailure,
   extractReviewResponse,
   formatReviewableRanges,
   isTrustedReviewTrigger,
@@ -11,6 +12,36 @@ import {
   reviewReadiness,
   validateReviewResponse,
 } from './opencode-review.mjs';
+
+test('classifies and sanitizes OpenCode provider failures', () => {
+  const failure = describeOpenCodeFailure(
+    {
+      status: 1,
+      signal: null,
+      error: undefined,
+      stderr:
+        'HTTP 429 rate limit: Authorization=Bearer top-secret token=abc123 api_key=nvapi-secret',
+    },
+    42
+  );
+  assert.equal(failure.category, 'rate-limit');
+  assert.equal(failure.elapsedSeconds, 42);
+  assert.doesNotMatch(JSON.stringify(failure), /top-secret|abc123|nvapi-secret/);
+});
+
+test('distinguishes timeout and network failures', () => {
+  assert.equal(
+    describeOpenCodeFailure(
+      { status: null, signal: 'SIGTERM', error: { code: 'ETIMEDOUT', message: 'timed out' } },
+      360
+    ).category,
+    'timeout'
+  );
+  assert.equal(
+    describeOpenCodeFailure({ status: 1, stderr: 'TypeError: fetch failed' }, 10).category,
+    'network'
+  );
+});
 
 test('keeps all OpenCode review attempts inside the workflow timeout', () => {
   const workflowTimeoutMs = 20 * 60 * 1000;

@@ -8,6 +8,38 @@ const MAX_FINDINGS = 10;
 const PENDING_LABEL = 'opencode-review-pending';
 export const OPENCODE_ATTEMPT_TIMEOUT_MS = 6 * 60 * 1000;
 export const MAX_REVIEW_ATTEMPTS = 2;
+const FAILURE_DETAIL_LIMIT = 2000;
+
+function sanitizeFailureText(value) {
+  return String(value || '')
+    .replace(/Bearer\s+\S+/gi, 'Bearer [REDACTED]')
+    .replace(/\b(?:nvapi-[A-Za-z0-9_-]+|gh[opsu]_[A-Za-z0-9_]+)\b/g, '[REDACTED]')
+    .replace(
+      /\b(api[_-]?key|authorization|token|secret)\s*[:=]\s*["']?[^\s"',}]+/gi,
+      '$1=[REDACTED]'
+    )
+    .slice(-FAILURE_DETAIL_LIMIT);
+}
+
+export function describeOpenCodeFailure(result, elapsedSeconds) {
+  const rawDetails = [result.error?.message, result.stderr].filter(Boolean).join('\n');
+  let category = 'process-exit';
+  if (result.error?.code === 'ETIMEDOUT') category = 'timeout';
+  else if (/\b429\b|rate[ -]?limit|quota/i.test(rawDetails)) category = 'rate-limit';
+  else if (/\b(?:401|403)\b|unauthori[sz]ed|forbidden|authentication/i.test(rawDetails))
+    category = 'authentication';
+  else if (/fetch failed|network|ECONN|ENOTFOUND|EAI_AGAIN|socket|connection/i.test(rawDetails))
+    category = 'network';
+
+  return {
+    category,
+    elapsedSeconds,
+    status: result.status ?? null,
+    signal: result.signal ?? null,
+    code: result.error?.code ?? null,
+    details: sanitizeFailureText(rawDetails) || 'No stderr or process error was provided.',
+  };
+}
 
 export function isTrustedReviewTrigger(eventName, payload) {
   if (eventName === 'pull_request') return true;
@@ -278,7 +310,11 @@ function runOpenCode(prompt, reviewable) {
       `OpenCode review process ended after ${elapsedSeconds}s (status: ${result.status}).`
     );
     if (!result.error && result.status === 0) return result.stdout;
-    throw result.error ?? new Error(result.stderr || result.stdout || 'OpenCode failed');
+    const failure = describeOpenCodeFailure(result, elapsedSeconds);
+    console.error('OpenCode review failure:', failure);
+    throw new Error(
+      `OpenCode ${failure.category} failure after ${elapsedSeconds}s: ${failure.details}`
+    );
   } finally {
     unlinkSync(promptFile);
   }
