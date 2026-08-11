@@ -1,13 +1,16 @@
 import React from 'react';
 import { ApiKeyOnboarding } from './components/ApiKeyOnboarding';
+import { PageAttachments } from './components/PageAttachments';
 import { Composer } from './components/Composer';
 import { Conversation } from './components/Conversation';
 import { PageHeader } from './components/PageHeader';
 import { useActiveTab } from './hooks/useActiveTab';
 import { useChat } from './hooks/useChat';
+import { useSavedPages } from './hooks/useSavedPages';
 import { useSidepanelSettings } from './hooks/useSidepanelSettings';
 import './styles.css';
-import { evaluateLinkSafety } from '@/shared/link-safety';
+import { isEvidenceLink } from '@/background/research/link-policy';
+import type { LinkInfo } from '@/shared/types';
 
 export default function App() {
   const activeTab = useActiveTab();
@@ -18,6 +21,7 @@ export default function App() {
     cloudEndpoint: settings.model.customEndpoint || 'https://integrate.api.nvidia.com',
     acceptCloudNotice: settings.acceptCloudNotice,
   });
+  const savedPages = useSavedPages(chat.activeConversationId);
 
   const openSettings = () => chrome.runtime.openOptionsPage();
 
@@ -55,28 +59,41 @@ export default function App() {
       <Conversation
         messages={chat.messages}
         promptsEnabled={pageReady}
-        onPrompt={prompt => void chat.send(prompt)}
+        onPrompt={prompt => void chat.send(prompt, savedPages.selectedPages)}
+      />
+      <PageAttachments
+        pages={savedPages.pages}
+        selectedIds={savedPages.selectedIds}
+        disabled={chat.isLoading || !savedPages.isLoaded}
+        onAdd={savedPages.addSnapshot}
+        onSelect={savedPages.select}
+        onRemove={savedPages.remove}
+        onRefresh={savedPages.replaceSnapshot}
+        onRefreshWarning={savedPages.setRefreshWarning}
       />
       <Composer
         value={chat.input}
         onChange={chat.setInput}
-        onSend={() => void chat.send()}
+        onSend={() => void chat.send(undefined, savedPages.selectedPages)}
         pageReady={pageReady}
         busy={chat.isLoading || !chat.isHistoryLoaded}
         generating={chat.isLoading}
         onStop={() => void chat.stop()}
         deepResearch={chat.deepResearch}
         onDeepResearchChange={chat.setDeepResearch}
-        researchSubjectCount={countResearchLinks(activeTab.content?.links || [])}
+        researchSubjectCount={countResearchLinks([
+          ...(activeTab.content?.links || []),
+          ...savedPages.selectedPages.flatMap(page => page.links),
+        ])}
       />
     </main>
   );
 }
 
-function countResearchLinks(links: Array<{ url: string; text: string }>) {
+function countResearchLinks(links: LinkInfo[]) {
   const sources = new Set<string>();
   links.forEach(link => {
-    if (!evaluateLinkSafety(link).safe) return;
+    if (!isEvidenceLink(link)) return;
     try {
       const url = new URL(link.url);
       url.hash = '';

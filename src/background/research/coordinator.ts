@@ -6,7 +6,13 @@ import {
   setResearchJobStatus,
 } from './engine';
 import { getResearchJob, getResumableResearchJobs } from './storage';
-import type { ResearchProgress, ResearchTask, StorageSettings, TabContent } from '@/shared/types';
+import type {
+  ResearchProgress,
+  ResearchTask,
+  SavedPage,
+  StorageSettings,
+  TabContent,
+} from '@/shared/types';
 
 export const RESEARCH_RESUME_ALARM = 'resume-deep-research';
 
@@ -25,8 +31,8 @@ export class ResearchCoordinator {
     private readonly getSettings: () => Promise<StorageSettings>
   ) {}
 
-  async start(content: TabContent, question: string, messageId: string) {
-    const job = await createResearchJob(content, question, messageId);
+  async start(content: TabContent, contextPages: SavedPage[], question: string, messageId: string) {
+    const job = await createResearchJob(content, contextPages, question, messageId);
     await this.launch(job.id);
     return job;
   }

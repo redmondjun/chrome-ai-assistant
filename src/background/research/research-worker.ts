@@ -59,6 +59,46 @@ export async function scanResearchSeed(options: WorkerOptions) {
   await checkpoint(task, `${task.label}: seed scan completed`);
 }
 
+export async function scanResearchSeedWithoutModel(options: WorkerOptions) {
+  const { task, retrieveSource, checkpoint } = options;
+  const source = { url: task.sourceUrl, title: task.title, depth: 0 };
+  task.seedStatus = 'running';
+  task.status = 'running';
+  setPhase(task, 'opening', source);
+  const result = await retrieveAndRecord(task, source, retrieveSource);
+  if (!result.evidence) {
+    task.seedStatus = 'failed';
+    throw new Error(result.error || `No readable seed evidence was collected for ${task.label}.`);
+  }
+  task.pendingSources = [];
+  task.seedAssessment = {
+    summary: result.evidence.excerpt.slice(0, 1200),
+    relevance: 1,
+    themes: [],
+    evidenceGaps: [],
+    expansionNeeded: false,
+  };
+  task.seedStatus = 'completed';
+  task.expansionStatus = 'skipped';
+  task.status = 'queued';
+  setPhase(task, 'queued');
+  await checkpoint(task, `${task.label}: seed evidence saved for batched analysis`);
+}
+
+export async function finalizeResearchSubjectWithoutModel(options: WorkerOptions) {
+  const { task, getEvidence, checkpoint } = options;
+  const evidence = getEvidence(task);
+  if (evidence.length === 0)
+    throw new Error(`No readable evidence was collected for ${task.label}.`);
+  task.report = evidence
+    .map(item => `${item.title}\nSOURCE: ${item.url}\n${item.excerpt.slice(0, 1200)}`)
+    .join('\n\n');
+  task.expansionStatus = 'skipped';
+  task.status = 'completed';
+  setPhase(task, 'completed');
+  await checkpoint(task, `${task.label}: evidence prepared for batched analysis`);
+}
+
 export async function finalizeResearchSubject(
   options: WorkerOptions,
   expansionItems: ResearchExpansionItem[]

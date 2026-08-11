@@ -6,7 +6,7 @@ export function extractResearchTasks(links: LinkInfo[]): ResearchTask[] {
   links.forEach(link => {
     if (!isHttpUrl(link.url)) return;
     const safety = link.safety || evaluateLinkSafety(link);
-    if (safety.safe && isNavigationLink(link)) return;
+    if (!safety.safe || isNavigationLink(link)) return;
     const sourceUrl = canonicalizeUrl(link.url);
     if (tasks.has(sourceUrl)) return;
     const label = link.text.trim() || getUrlLabel(sourceUrl);
@@ -16,8 +16,8 @@ export function extractResearchTasks(links: LinkInfo[]): ResearchTask[] {
       label,
       sourceUrl: link.url,
       title: label,
-      status: safety.safe ? 'queued' : 'skipped',
-      phase: safety.safe ? 'queued' : 'skipped',
+      status: 'queued',
+      phase: 'queued',
       phaseStartedAt: now,
       lastActivityAt: now,
       reasoning: [],
@@ -25,19 +25,8 @@ export function extractResearchTasks(links: LinkInfo[]): ResearchTask[] {
       relatedSourcesRead: 0,
       relatedSourcesAttempted: 0,
       evidence: [],
-      decisions: safety.safe
-        ? []
-        : [
-            {
-              url: link.url,
-              title: label,
-              outcome: 'discarded',
-              reason: 'blocked-unsafe-action',
-              depth: 0,
-              timestamp: now,
-            },
-          ],
-      pendingSources: safety.safe ? [{ url: link.url, title: label, depth: 0 }] : [],
+      decisions: [],
+      pendingSources: [{ url: link.url, title: label, depth: 0 }],
       visitedUrls: [],
     });
   });
@@ -83,7 +72,7 @@ function isNavigationLink(link: LinkInfo) {
     /\/(?:login|logout|people|profile|dashboard|create|calendar|plugins|pages\/viewinfo|pages\/viewpreviousversions|pages\/viewpagehierarchy|pages\/viewpagetree|spaces\/spacepermissions)(?:[/?#\s]|$)/.test(
       value
     ) ||
-    /^(?:attachments?(?:\s*\(\d+\))?|page history|restrictions|people who can view|analytics|page information|resolved comments?(?:\s*\(\d+\))?|view in hierarchy|view storage format|view source|export to pdf|export to word|import word document|show more|edit profile)$/i.test(
+    /^(?:attachments?(?:\s*\(\d+\))?|page history|restrictions|people who can view|analytics|page information|resolved comments?(?:\s*\(\d+\))?|view in hierarchy|view storage format|view source|export to pdf|export to word|import word document|show more|edit|delete|create|configure|administration|edit profile)$/i.test(
       label
     )
   );

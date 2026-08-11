@@ -62,6 +62,10 @@ export function normalizeResearchJob(job: ResearchJob) {
   job.expansionPlan ||= [];
   job.sourceRegistry ||= [];
   job.sourceBudget ||= 1000;
+  job.contextPages ||= [];
+  job.contextWarnings ||= [];
+  job.modelRequestsUsed ||= 0;
+  job.modelRequestBudget ||= 24;
   job.sourceRegistry.forEach(source => {
     source.taskIds ||= [];
     source.retries ||= 0;

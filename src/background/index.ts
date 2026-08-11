@@ -17,9 +17,10 @@ import {
 import { ModelRouter, createRouter } from './api/router';
 import { analyzeWithReasoning, AnalysisCallbacks } from './pipeline/analyze';
 import { getTabContent } from './content/tab-content';
+import { fetchLinkContentInTab } from './content/link-tab-fetcher';
 import { ResearchCoordinator, RESEARCH_RESUME_ALARM } from './research/coordinator';
 import { buildResearchConversationContext } from './research/context';
-import type { BackgroundMessage, ChatMessage, TabContent } from '@/shared/types';
+import type { BackgroundMessage, ChatMessage, SavedPage, TabContent } from '@/shared/types';
 
 let router: ModelRouter | null = null;
 let routerInitialization: Promise<ModelRouter> | null = null;
@@ -88,6 +89,26 @@ chrome.runtime.onMessage.addListener((message: BackgroundMessage, sender, sendRe
           break;
         }
 
+        case 'GET_URL_CONTENT': {
+          if (!message.url) throw new Error('No page URL provided.');
+          const result = await fetchLinkContentInTab(message.url);
+          if (!result.content || !result.finalUrl || !result.title) {
+            throw new Error(result.error || 'The page did not return readable content.');
+          }
+          sendResponse({
+            type: 'TAB_CONTENT',
+            content: {
+              url: result.finalUrl,
+              title: result.title,
+              text: result.content,
+              links: result.links || [],
+              meta: {},
+              timestamp: Date.now(),
+            },
+          });
+          break;
+        }
+
         case 'ASK_QUESTION': {
           if (!message.question) throw new Error('No question provided');
           const activeRouter = await initializeRouter();
@@ -148,7 +169,7 @@ chrome.runtime.onMessage.addListener((message: BackgroundMessage, sender, sendRe
 
           analyzeWithReasoning(
             activeRouter,
-            content,
+            mergeContextPages(content, message.contextPages || []),
             message.question,
             settings,
             callbacks,
@@ -191,7 +212,12 @@ chrome.runtime.onMessage.addListener((message: BackgroundMessage, sender, sendRe
             if (!tabId) throw new Error('No tab ID');
             content = await getTabContent(tabId);
           }
-          const job = await researchCoordinator.start(content, message.question, message.messageId);
+          const job = await researchCoordinator.start(
+            content,
+            message.contextPages || [],
+            message.question,
+            message.messageId
+          );
           sendResponse({ ok: true, jobId: job.id, progress: job.progress });
           break;
         }
@@ -341,6 +367,27 @@ chrome.runtime.onMessage.addListener((message: BackgroundMessage, sender, sendRe
   })();
   return true;
 });
+
+function mergeContextPages(primary: TabContent, pages: SavedPage[]): TabContent {
+  if (pages.length === 0) return primary;
+  const warnings = pages
+    .filter(page => page.refreshWarning)
+    .map(page => `${page.title}: ${page.refreshWarning}`);
+  return {
+    ...primary,
+    text: [
+      `PRIMARY PAGE\n${primary.title}\n${primary.url}\n\n${primary.text}`,
+      ...pages.map(
+        page =>
+          `ATTACHED SAVED PAGE\n${page.title}\n${page.url}\nCaptured: ${new Date(page.capturedAt).toISOString()}${page.refreshWarning ? `\nWarning: ${page.refreshWarning}` : ''}\n\n${page.text}`
+      ),
+      warnings.length > 0 ? `ATTACHMENT WARNINGS\n${warnings.join('\n')}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n\n---\n\n'),
+    links: [...primary.links, ...pages.flatMap(page => page.links)],
+  };
+}
 
 function required(value: string | undefined, name: string): string {
   if (!value) throw new Error(`Missing ${name}`);

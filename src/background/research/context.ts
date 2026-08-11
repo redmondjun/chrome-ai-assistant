@@ -21,12 +21,14 @@ export function createPartialResearchAnswer(
     source => source.status === 'failed'
   ).length;
   const completedSubjects = job.tasks.filter(task => task.status === 'completed').length;
+  const totalSubjects = job.tasks.filter(task => task.status !== 'skipped').length;
   const header = [
     'Partial Deep Research result',
     '',
-    `Completed subjects: ${completedSubjects}/${job.tasks.length}`,
+    `Completed subjects: ${completedSubjects}/${totalSubjects}`,
     `Validated readable sources: ${successfulSources}`,
     `Failed or inaccessible sources: ${failedSources}`,
+    ...(job.contextWarnings || []).map(warning => `Saved page warning: ${warning}`),
     error ? `Research stopped: ${error}` : '',
     '',
     'Findings collected before the research stopped:',
@@ -48,7 +50,7 @@ export function buildResearchConversationContext(
     originalQuestion: job.question,
     status: job.status,
     completedSubjects: job.tasks.filter(task => task.status === 'completed').length,
-    totalSubjects: job.tasks.length,
+    totalSubjects: job.tasks.filter(task => task.status !== 'skipped').length,
     successfulSources: registry.filter(source => source.status === 'success' && source.evidence)
       .length,
     failedSources: registry.filter(source => source.status === 'failed').length,

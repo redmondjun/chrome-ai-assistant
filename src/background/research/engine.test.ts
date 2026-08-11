@@ -74,20 +74,26 @@ describe('Deep Research subject discovery', () => {
     ).toBe(false);
   });
 
-  it('keeps unsafe seeds visible but permanently skipped', () => {
-    const [task] = extractResearchTasks([
+  it('does not create research subjects for unsafe action and navigation links', () => {
+    const tasks = extractResearchTasks([
       {
         url: 'https://stash.example.com/plugins/servlet/createBranch?issue=SQ-100',
         text: 'Create branch',
         isExternal: true,
       },
+      {
+        url: 'https://wiki.example.com/pages/editpage.action?pageId=1',
+        text: 'Edit',
+        isExternal: false,
+      },
+      {
+        url: 'https://wiki.example.com/people',
+        text: 'People',
+        isExternal: false,
+      },
     ]);
 
-    expect(task.status).toBe('skipped');
-    expect(task.pendingSources).toEqual([]);
-    expect(task.decisions).toEqual([
-      expect.objectContaining({ outcome: 'discarded', reason: 'blocked-unsafe-action' }),
-    ]);
+    expect(tasks).toEqual([]);
   });
 });
 
@@ -225,8 +231,9 @@ describe('Deep Research worker pool', () => {
       links: [],
     }));
 
+    const router = createStageRouter(false);
     await runResearchJob(
-      createStageRouter(false),
+      router,
       job.id,
       createSettings(3),
       { onProgress: jest.fn(), onAnswer: jest.fn(), onDone: jest.fn() },
@@ -237,6 +244,9 @@ describe('Deep Research worker pool', () => {
     expect(job.batchSummaries?.filter(summary => summary.kind === 'discovery')).toHaveLength(17);
     expect(job.batchSummaries?.filter(summary => summary.kind === 'final')).toHaveLength(17);
     expect(job.totalBatches).toBe(17);
+    expect(router.complete).toHaveBeenCalledTimes(19);
+    expect(job.modelRequestsUsed).toBe(19);
+    expect(job.modelRequestsUsed).toBeLessThan(job.modelRequestBudget || 24);
   });
 
   it('deduplicates related sources across workers and derives source counters', async () => {
@@ -269,6 +279,81 @@ describe('Deep Research worker pool', () => {
     expect(job.progress.sourcesRead).toBe(3);
     expect(job.progress.sourceCacheHits).toBe(1);
     expect(job.progress.sourcesRead).toBeLessThanOrEqual(job.sourceRegistry?.length || 0);
+  });
+
+  it('grounds synthesis in an attached page without expanding rejected child links', async () => {
+    const ticket = createTask('ticket');
+    const qualificationLink = createTask('qualification-child');
+    qualificationLink.originPageId = 'qualification-page';
+    const job = createJob([ticket, qualificationLink]);
+    job.question = 'Research all tickets and map them to qualifications';
+    job.contextPages = [
+      {
+        id: 'qualification-page',
+        url: 'https://wiki.example.com/promotion-plan',
+        title: 'Promotion plan',
+        text: 'Qualification rubric: demonstrate complex project delivery.',
+        links: [
+          {
+            url: qualificationLink.sourceUrl,
+            text: qualificationLink.title,
+            isExternal: true,
+          },
+        ],
+        capturedAt: 1,
+      },
+    ];
+    jest.mocked(getResearchJob).mockResolvedValue(job);
+    jest.mocked(fetchLinkContentInTab).mockImplementation(async url => ({
+      content: `Ticket evidence from ${url}`,
+      title: url,
+      finalUrl: url,
+      links: [],
+    }));
+    const router = createStageRouter(false);
+    router.complete.mockImplementation(async (_question, _context, prompt) => {
+      if (prompt.startsWith('Decide which saved context pages')) {
+        return { text: '[]', modelUsed: 'cloud' };
+      }
+      if (prompt.includes('Return JSON only')) {
+        return {
+          text: JSON.stringify({
+            summary: 'Ticket summary',
+            relevance: 1,
+            themes: [],
+            evidenceGaps: [],
+            expansionNeeded: false,
+          }),
+          modelUsed: 'cloud',
+        };
+      }
+      return { text: 'Grounded qualification draft', modelUsed: 'cloud' };
+    });
+
+    await runResearchJob(
+      router,
+      job.id,
+      createSettings(2),
+      { onProgress: jest.fn(), onAnswer: jest.fn(), onDone: jest.fn() },
+      new AbortController().signal
+    );
+
+    expect(fetchLinkContentInTab).toHaveBeenCalledWith(ticket.sourceUrl, expect.any(AbortSignal));
+    expect(fetchLinkContentInTab).not.toHaveBeenCalledWith(
+      qualificationLink.sourceUrl,
+      expect.anything()
+    );
+    expect(qualificationLink.decisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ reason: 'attached-page-links-not-selected' }),
+      ])
+    );
+    expect(router.complete).toHaveBeenCalledWith(
+      job.question,
+      expect.anything(),
+      expect.stringContaining('Qualification rubric: demonstrate complex project delivery.'),
+      expect.anything()
+    );
   });
 
   it('stops expansion at the persisted global unique-source budget', async () => {
