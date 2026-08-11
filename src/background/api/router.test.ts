@@ -138,6 +138,50 @@ describe('ModelRouter', () => {
       ).rejects.toThrow('local-only mode');
       expect(cloudCompletion).not.toHaveBeenCalled();
     });
+
+    it('ignores cloud overrides in local-only mode', async () => {
+      require('../api/local-client').isLocalModelReady.mockReturnValue(true);
+      require('../api/local-client').completeLocal.mockResolvedValue('Local response');
+      const { NIMClient } = require('../api/nim-client');
+      const cloudCompletion = jest.fn();
+      NIMClient.prototype.chatCompletion = cloudCompletion;
+      const localOnlyRouter = new ModelRouter(mockSettings, true);
+
+      const result = await localOnlyRouter.complete(
+        'research',
+        { hasLinks: true, contentLength: 10000 },
+        'prompt',
+        { cloudModel: 'glm-5.2' }
+      );
+
+      expect(result).toEqual({ text: 'Local response', modelUsed: 'local' });
+      expect(cloudCompletion).not.toHaveBeenCalled();
+    });
+
+    it('uses a cloud model override without changing ordinary routing', async () => {
+      require('../api/local-client').isLocalModelReady.mockReturnValue(true);
+      const { NIMClient } = require('../api/nim-client');
+      const cloudCompletion = jest.fn().mockResolvedValue('Orchestrated response');
+      NIMClient.prototype.chatCompletion = cloudCompletion;
+
+      const result = await router.complete(
+        'simple task',
+        { hasLinks: false, contentLength: 100 },
+        'prompt',
+        { cloudModel: 'glm-5.2' }
+      );
+
+      expect(require('../api/local-client').completeLocal).not.toHaveBeenCalled();
+      expect(cloudCompletion).toHaveBeenCalledWith(
+        expect.objectContaining({ model: 'glm-5.2' }),
+        undefined
+      );
+      expect(result).toEqual({
+        text: 'Orchestrated response',
+        modelUsed: 'cloud',
+        cloudModel: 'glm-5.2',
+      });
+    });
   });
 
   describe('streamComplete', () => {

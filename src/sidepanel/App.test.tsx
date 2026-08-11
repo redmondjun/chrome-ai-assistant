@@ -40,6 +40,9 @@ const savedSettings: StorageSettings = {
     subjectBatchSize: 25,
     maxUniqueSourcesPerJob: 1000,
     cloudNoticeAccepted: false,
+    orchestrationEnabled: true,
+    workerModels: ['glm-5.2', 'nemotron-3-super', 'minimax-m3'],
+    leadModel: 'glm-5.2',
   },
   ui: {
     theme: 'light',

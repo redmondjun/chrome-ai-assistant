@@ -8,6 +8,12 @@ import { getResearchJob, saveResearchJob } from './storage';
 import { summarizeDiscoveryBatch, summarizeFinalBatch, synthesizeResearch } from './synthesis';
 import { finalizeResearchSubject, scanResearchSeed } from './research-worker';
 import { createPartialResearchAnswer } from './context';
+import {
+  assignResearchModels,
+  createLeadRouter,
+  createOrchestrationConfig,
+  createWorkerRouter,
+} from './orchestration';
 import type {
   ResearchBatchSummary,
   ResearchEvidence,
@@ -30,7 +36,8 @@ export interface ResearchCallbacks {
 export async function createResearchJob(
   content: TabContent,
   question: string,
-  messageId: string
+  messageId: string,
+  settings: StorageSettings
 ): Promise<ResearchJob> {
   const tasks = extractResearchTasks(content.links);
   if (tasks.length === 0) {
@@ -87,7 +94,9 @@ export async function createResearchJob(
     progress,
     createdAt: now,
     updatedAt: now,
+    orchestration: createOrchestrationConfig(settings),
   };
+  assignResearchModels(job);
   await saveResearchJob(job);
   return job;
 }
@@ -103,6 +112,7 @@ export async function runResearchJob(
   if (!job || job.status === 'cancelled' || job.status === 'completed') return;
 
   prepareJob(job, settings);
+  const leadRouter = createLeadRouter(router, job.orchestration!);
   const checkpoint = createResearchCheckpoint(job, callbacks);
   const retrieveSource = createSourceRegistry({
     job,
@@ -117,7 +127,7 @@ export async function runResearchJob(
 
   try {
     await checkpoint(undefined, 'Selecting research subjects...');
-    await selectRelevantTasks(router, job, settings, checkpoint, signal);
+    await selectRelevantTasks(leadRouter, job, settings, checkpoint, signal);
     const selectedTasks = job.tasks.filter(task => task.status !== 'skipped');
     if (selectedTasks.length === 0) {
       job.partialAnswer = createPartialResearchAnswer(job);
@@ -161,13 +171,16 @@ export async function runResearchJob(
     });
     throwIfAborted(signal);
 
-    await runBatchSynthesis(router, job, selectedTasks, settings, checkpoint, signal);
+    await runBatchSynthesis(leadRouter, job, selectedTasks, settings, checkpoint, signal);
     throwIfAborted(signal);
 
     setResearchStage(job, 'final-synthesis');
-    await checkpoint(undefined, 'Combining compact batch summaries...');
+    await checkpoint(
+      undefined,
+      `Combining compact batch summaries with ${job.orchestration?.leadModel || 'the selected model'}...`
+    );
     const synthesizedAnswer = await synthesizeResearch(
-      router,
+      leadRouter,
       job,
       settings.privacy.localOnly,
       signal,
@@ -177,10 +190,12 @@ export async function runResearchJob(
       }
     );
     const failedSubjects = job.tasks.filter(task => task.status === 'failed').length;
+    let deliveredAnswer = synthesizedAnswer;
     if (failedSubjects > 0) {
       job.status = 'failed';
       job.error = `${failedSubjects} of ${selectedTasks.length} research subjects failed. The available findings are partial.`;
-      job.partialAnswer = synthesizedAnswer;
+      deliveredAnswer = `Partial research result — ${job.error}\n\n${synthesizedAnswer}`;
+      job.partialAnswer = deliveredAnswer;
       job.finalAnswer = undefined;
     } else {
       job.status = 'completed';
@@ -188,7 +203,7 @@ export async function runResearchJob(
     }
     setResearchStage(job, 'completed');
     await checkpoint(undefined, failedSubjects > 0 ? job.error : 'Deep Research completed.');
-    callbacks.onAnswer(synthesizedAnswer);
+    callbacks.onAnswer(deliveredAnswer);
     callbacks.onDone();
   } catch (error) {
     if (signal.aborted) return;
@@ -230,7 +245,8 @@ async function runSeedStage(options: StageOptions) {
     await checkpoint(undefined, `Seed scan · batch ${index + 1} of ${batches.length}`);
     await runWorkerPool(pending, settings.research.workerConcurrency, async task => {
       try {
-        await scanResearchSeed({ ...options, task, question: job.question });
+        const workerRouter = createWorkerRouter(options.router, job, task, checkpoint);
+        await scanResearchSeed({ ...options, router: workerRouter, task, question: job.question });
       } catch (error) {
         if (signal.aborted) throw error;
         task.seedStatus = 'failed';
@@ -242,7 +258,7 @@ async function runSeedStage(options: StageOptions) {
     });
     if (!findBatchSummary(job, index, 'discovery')) {
       const summary = await summarizeDiscoveryBatch(
-        options.router,
+        createLeadRouter(options.router, job.orchestration!),
         job.question,
         batches[index],
         settings.privacy.localOnly,
@@ -270,7 +286,11 @@ async function runExpansionStage(options: StageOptions) {
         item => item.taskId === task.id && item.status === 'planned'
       );
       try {
-        await finalizeResearchSubject({ ...options, task, question: job.question }, items);
+        const workerRouter = createWorkerRouter(options.router, job, task, checkpoint);
+        await finalizeResearchSubject(
+          { ...options, router: workerRouter, task, question: job.question },
+          items
+        );
       } catch (error) {
         if (signal.aborted) throw error;
         task.status = 'failed';
@@ -419,6 +439,8 @@ export async function retryFailedResearchTasks(jobId: string): Promise<ResearchJ
     task.status = 'queued';
     task.phase = 'queued';
     task.error = undefined;
+    task.effectiveModel = task.assignedModel;
+    task.fallbackUsed = false;
     if (task.seedStatus === 'failed') task.seedStatus = 'queued';
   });
   (job.sourceRegistry || []).forEach(source => {
@@ -449,6 +471,9 @@ function prepareJob(job: ResearchJob, settings: StorageSettings) {
   job.batchSummaries ||= [];
   job.expansionPlan ||= [];
   job.sourceRegistry ||= [];
+  job.orchestration ||= createOrchestrationConfig(settings);
+  if (settings.privacy.localOnly) job.orchestration.enabled = false;
+  assignResearchModels(job);
   if (job.sourceRegistry.length === 0 && job.tasks.every(task => task.seedStatus !== 'completed')) {
     job.sourceBudget = settings.research.maxUniqueSourcesPerJob;
   } else {

@@ -50,6 +50,7 @@ export function SettingsForm() {
         />
         <ResearchSettingsSection
           settings={settings.research}
+          localOnly={settings.privacy.localOnly}
           onChange={research => setSettings(current => ({ ...current, research }))}
         />
         <AppearancePrivacySection

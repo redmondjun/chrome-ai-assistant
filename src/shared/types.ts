@@ -1,4 +1,5 @@
 import type { LinkSafetyResult } from './link-safety';
+import type { SupportedCloudModel } from './cloud-models';
 
 export interface TabContent {
   url: string;
@@ -60,13 +61,7 @@ export interface ReasoningStep {
 }
 
 export interface ModelSettings {
-  cloudModel:
-    | 'nemotron-3-nano'
-    | 'nemotron-3-super'
-    | 'nemotron-3-ultra'
-    | 'glm-5.2'
-    | 'minimax-m3'
-    | 'custom';
+  cloudModel: SupportedCloudModel | 'custom';
   customEndpoint?: string;
   apiKey: string;
   useLocal: boolean;
@@ -91,6 +86,15 @@ export interface ResearchSettings {
   subjectBatchSize: number;
   maxUniqueSourcesPerJob: number;
   cloudNoticeAccepted: boolean;
+  orchestrationEnabled: boolean;
+  workerModels: SupportedCloudModel[];
+  leadModel: SupportedCloudModel;
+}
+
+export interface ResearchOrchestrationConfig {
+  enabled: boolean;
+  workerModels: SupportedCloudModel[];
+  leadModel: SupportedCloudModel;
 }
 
 export type ResearchStage =
@@ -190,6 +194,9 @@ export interface ResearchTask {
   visitedUrls: string[];
   report?: string;
   error?: string;
+  assignedModel?: SupportedCloudModel;
+  effectiveModel?: SupportedCloudModel;
+  fallbackUsed?: boolean;
 }
 
 export interface ResearchProgress {
@@ -217,6 +224,7 @@ export interface ResearchProgress {
   sourceBudgetUsed?: number;
   sourceBudgetTotal?: number;
   sourceBudgetOverflow?: number;
+  leadModel?: SupportedCloudModel;
 }
 
 export interface ResearchJob {
@@ -238,6 +246,7 @@ export interface ResearchJob {
   partialAnswer?: string;
   finalAnswer?: string;
   error?: string;
+  orchestration?: ResearchOrchestrationConfig;
   createdAt: number;
   updatedAt: number;
 }
@@ -319,12 +328,14 @@ export interface CompletionOptions {
   topP?: number;
   stop?: string[];
   signal?: AbortSignal;
+  cloudModel?: SupportedCloudModel;
 }
 
 export interface CompletionResult {
   text: string;
   modelUsed: 'local' | 'cloud';
   tokensUsed?: number;
+  cloudModel?: SupportedCloudModel;
 }
 
 export interface BackgroundMessage {

@@ -670,6 +670,12 @@ summary:focus-visible {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+.research-model-badge {
+  color: var(--accent);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
 .research-worker summary small,
 .research-worker > summary > span:last-child {
   color: var(--muted);

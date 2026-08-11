@@ -139,6 +139,56 @@ describe('SettingsForm', () => {
     );
   });
 
+  it('configures the worker model pool and lead model', async () => {
+    render(<SettingsForm />);
+
+    const nano = await screen.findByLabelText('Nemotron 3 Nano');
+    fireEvent.click(nano);
+    fireEvent.change(screen.getByLabelText('Lead synthesis model'), {
+      target: { value: 'nemotron-3-super' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+
+    await waitFor(() =>
+      expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({
+        type: 'UPDATE_SETTINGS',
+        settings: expect.objectContaining({
+          research: expect.objectContaining({
+            orchestrationEnabled: true,
+            workerModels: ['glm-5.2', 'nemotron-3-super', 'minimax-m3', 'nemotron-3-nano'],
+            leadModel: 'nemotron-3-super',
+          }),
+        }),
+      })
+    );
+  });
+
+  it('requires one worker model and disables orchestration in local-only mode', async () => {
+    const first = render(<SettingsForm />);
+
+    fireEvent.click(await screen.findByLabelText('Nemotron 3 Super'));
+    fireEvent.click(screen.getByLabelText('MiniMax M3'));
+    expect(screen.getByLabelText('GLM 5.2')).toBeDisabled();
+    first.unmount();
+
+    jest.mocked(chrome.runtime.sendMessage).mockImplementation(async message => {
+      if (message.type === 'GET_SETTINGS') {
+        return {
+          settings: { ...storedSettings, privacy: { ...storedSettings.privacy, localOnly: true } },
+        };
+      }
+      if (message.type === 'AUTH_GET_STATE') {
+        return { account: { configured: false, user: null } };
+      }
+      return { ok: true };
+    });
+    render(<SettingsForm />);
+    expect(
+      await screen.findByText(/cloud orchestration is unavailable while local-only mode/i)
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('Use multiple NVIDIA models for Deep Research')).toBeDisabled();
+  });
+
   it('resets stored settings and returns the theme to system', async () => {
     render(<SettingsForm />);
     await waitFor(() => expect(document.documentElement.dataset.theme).toBe('dark'));

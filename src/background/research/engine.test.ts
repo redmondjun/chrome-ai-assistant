@@ -4,7 +4,7 @@ jest.mock('./storage', () => ({
 }));
 jest.mock('../content/link-tab-fetcher', () => ({ fetchLinkContentInTab: jest.fn() }));
 
-import { retryFailedResearchTasks, runResearchJob } from './engine';
+import { createResearchJob, retryFailedResearchTasks, runResearchJob } from './engine';
 import { extractResearchTasks, isEvidenceLink } from './link-policy';
 import { fetchLinkContentInTab } from '../content/link-tab-fetcher';
 import { getResearchJob, saveResearchJob } from './storage';
@@ -33,6 +33,39 @@ describe('Deep Research subject discovery', () => {
     expect(extractResearchTasks(links).map(task => task.label)).toEqual([
       'SQ-100 First ticket',
       'Platform architecture',
+    ]);
+  });
+
+  it('snapshots stable model assignments when a job is created', async () => {
+    const settings = createSettings(3);
+    const job = await createResearchJob(
+      {
+        url: 'https://example.com',
+        title: 'Subjects',
+        text: 'Research subjects',
+        links: ['one', 'two', 'three', 'four'].map(label => ({
+          url: `https://example.com/${label}`,
+          text: label,
+          isExternal: false,
+        })),
+        meta: {},
+        timestamp: Date.now(),
+      },
+      'Research every subject',
+      'message',
+      settings
+    );
+
+    expect(job.orchestration).toEqual({
+      enabled: true,
+      workerModels: ['glm-5.2', 'nemotron-3-super', 'minimax-m3'],
+      leadModel: 'glm-5.2',
+    });
+    expect(job.tasks.map(task => task.assignedModel)).toEqual([
+      'glm-5.2',
+      'nemotron-3-super',
+      'minimax-m3',
+      'glm-5.2',
     ]);
   });
 
@@ -598,10 +631,13 @@ describe('Deep Research worker pool', () => {
 
     expect(fetchLinkContentInTab).not.toHaveBeenCalled();
     expect(job.status).toBe('failed');
-    expect(job.partialAnswer).toBe('Compact cited research summary');
+    expect(job.partialAnswer).toContain('Partial research result');
+    expect(job.partialAnswer).toContain('Compact cited research summary');
     expect(job.finalAnswer).toBeUndefined();
     expect(job.error).toContain('370 of 418 research subjects failed');
-    expect(callbacks.onAnswer).toHaveBeenCalledWith('Compact cited research summary');
+    expect(callbacks.onAnswer).toHaveBeenCalledWith(
+      expect.stringContaining('Partial research result')
+    );
   });
 
   it('retries failed work while preserving validated source evidence', async () => {
@@ -768,6 +804,9 @@ function createSettings(workerConcurrency: number): StorageSettings {
       subjectBatchSize: 25,
       maxUniqueSourcesPerJob: 1000,
       cloudNoticeAccepted: true,
+      orchestrationEnabled: true,
+      workerModels: ['glm-5.2', 'nemotron-3-super', 'minimax-m3'],
+      leadModel: 'glm-5.2',
     },
     ui: { theme: 'system', showReasoning: true, showLinks: true, streaming: true },
     privacy: { localOnly: false, clearOnClose: false },

@@ -9,6 +9,7 @@ A Chrome extension that uses NVIDIA Nemotron models to read browser tabs, follow
 - **Hybrid AI** - Routes simple tasks to local Nemotron Mini 4B, complex tasks to cloud NIM (Nemotron 3 Nano/Super/Ultra)
 - **Full transparency** - Shows reasoning steps and every link visited with relevance scores
 - **Document generation** - Creates reports, summaries, analyses from gathered content
+- **Multi-model Deep Research** - Orchestrates parallel GLM, Nemotron, and MiniMax workers with GLM-led synthesis
 - **Private by default** - Local-first option with optional cloud fallback
 
 ## Installation
@@ -42,6 +43,7 @@ Download latest release from GitHub Releases and load as unpacked extension.
    - **MiniMax M3** - Multimodal reasoning, coding, and tool use with 1M context
 4. Toggle **Local Model** for on-device processing (downloads ~2.5GB on first use)
 5. Configure link following behavior
+6. Configure the Deep Research worker-model pool and lead synthesis model
 
 ### Accounts and cross-device sync
 

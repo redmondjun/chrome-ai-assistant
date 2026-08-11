@@ -224,6 +224,7 @@ describe('side panel UI', () => {
       '391 legacy sources above the current budget'
     );
     const worker = await screen.findByText('Architecture source');
+    expect(screen.getByText('MiniMax M3 · fallback')).toBeInTheDocument();
     expect(worker.closest('details')).not.toHaveAttribute('open');
     fireEvent.click(worker.closest('summary')!);
     expect(screen.getByText('Scoring related documentation')).toBeInTheDocument();
@@ -233,6 +234,39 @@ describe('side panel UI', () => {
       type: 'PAUSE_RESEARCH',
       jobId: 'job-1',
     });
+  });
+
+  it('identifies the lead model during final synthesis', async () => {
+    jest.mocked(chrome.runtime.sendMessage).mockResolvedValueOnce({ job: researchJobFixture() });
+    render(
+      <MessageItem
+        message={{
+          id: 'research-message',
+          role: 'assistant',
+          content: '',
+          timestamp: Date.now(),
+          isStreaming: true,
+          researchJobId: 'job-1',
+          researchProgress: {
+            jobId: 'job-1',
+            status: 'running',
+            activity: 'Combining summaries',
+            totalTasks: 1,
+            completedTasks: 1,
+            failedTasks: 0,
+            activeWorkers: 0,
+            sourcesRead: 1,
+            sourcesFailed: 0,
+            updatedAt: Date.now(),
+            activeTaskIds: [],
+            stage: 'final-synthesis',
+            leadModel: 'glm-5.2',
+          },
+        }}
+      />
+    );
+
+    expect(await screen.findByText('Lead: GLM 5.2')).toBeInTheDocument();
   });
 
   it('closes reasoning after the answer is generated', () => {
@@ -348,6 +382,9 @@ function researchJobFixture() {
         decisions: [],
         pendingSources: [],
         visitedUrls: [],
+        assignedModel: 'glm-5.2',
+        effectiveModel: 'minimax-m3',
+        fallbackUsed: true,
       },
     ],
     progress: {

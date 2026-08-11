@@ -26,7 +26,8 @@ export class ResearchCoordinator {
   ) {}
 
   async start(content: TabContent, question: string, messageId: string) {
-    const job = await createResearchJob(content, question, messageId);
+    const settings = await this.getSettings();
+    const job = await createResearchJob(content, question, messageId, settings);
     await this.launch(job.id);
     return job;
   }

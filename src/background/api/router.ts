@@ -24,7 +24,8 @@ export class ModelRouter {
     prompt: string,
     options: CompletionOptions = {}
   ): Promise<CompletionResult> {
-    const useLocal = this.shouldUseLocal(question, context);
+    const useLocal =
+      this.localOnly || (!options.cloudModel && this.shouldUseLocal(question, context));
 
     if (this.localOnly && !isLocalModelReady()) {
       throw new Error('Local-only mode is enabled, but the local model is not ready.');
@@ -49,9 +50,10 @@ export class ModelRouter {
       { role: 'user' as const, content: prompt },
     ];
 
+    const cloudModel = options.cloudModel || this.settings.cloudModel;
     const fullText = await this.nimClient.chatCompletion(
       {
-        model: this.settings.cloudModel,
+        model: cloudModel,
         messages,
         stream: false,
         temperature: options.temperature ?? 0.7,
@@ -61,7 +63,11 @@ export class ModelRouter {
       options.signal
     );
 
-    return { text: fullText, modelUsed: 'cloud' };
+    return {
+      text: fullText,
+      modelUsed: 'cloud',
+      cloudModel: cloudModel === 'custom' ? undefined : cloudModel,
+    };
   }
 
   async *streamComplete(
@@ -70,7 +76,8 @@ export class ModelRouter {
     prompt: string,
     options: CompletionOptions = {}
   ): AsyncGenerator<{ chunk: string; usedLocal: boolean }, CompletionResult, unknown> {
-    const useLocal = this.shouldUseLocal(question, context);
+    const useLocal =
+      this.localOnly || (!options.cloudModel && this.shouldUseLocal(question, context));
 
     if (this.localOnly && !isLocalModelReady()) {
       throw new Error('Local-only mode is enabled, but the local model is not ready.');
@@ -93,10 +100,11 @@ export class ModelRouter {
       }
     }
 
+    const cloudModel = options.cloudModel || this.settings.cloudModel;
     let fullText = '';
     for await (const chunk of this.nimClient.streamChatCompletion(
       {
-        model: this.settings.cloudModel,
+        model: cloudModel,
         messages: [
           { role: 'system', content: 'You are a helpful AI assistant.' },
           { role: 'user', content: prompt },
@@ -112,7 +120,11 @@ export class ModelRouter {
       yield { chunk, usedLocal: false };
     }
 
-    return { text: fullText, modelUsed: 'cloud' };
+    return {
+      text: fullText,
+      modelUsed: 'cloud',
+      cloudModel: cloudModel === 'custom' ? undefined : cloudModel,
+    };
   }
 
   private shouldUseLocal(

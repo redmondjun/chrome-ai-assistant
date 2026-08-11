@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTheme, type ThemePreference } from '@/shared/theme';
 import type { ModelSettings, ResearchSettings, StorageSettings } from '@/shared/types';
+import { DEFAULT_RESEARCH_LEAD_MODEL, DEFAULT_RESEARCH_WORKER_MODELS } from '@/shared/cloud-models';
 
 const DEFAULT_MODEL: ModelSettings = {
   cloudModel: 'nemotron-3-nano',
@@ -16,6 +17,9 @@ const DEFAULT_RESEARCH: ResearchSettings = {
   subjectBatchSize: 25,
   maxUniqueSourcesPerJob: 1000,
   cloudNoticeAccepted: false,
+  orchestrationEnabled: true,
+  workerModels: [...DEFAULT_RESEARCH_WORKER_MODELS],
+  leadModel: DEFAULT_RESEARCH_LEAD_MODEL,
 };
 
 export function useSidepanelSettings() {

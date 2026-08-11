@@ -1,5 +1,11 @@
 import type { StorageSettings, ModelSettings, LinkFollowSettings } from '@/shared/types';
 import {
+  DEFAULT_RESEARCH_LEAD_MODEL,
+  DEFAULT_RESEARCH_WORKER_MODELS,
+  isSupportedCloudModel,
+  normalizeCloudModelPool,
+} from '@/shared/cloud-models';
+import {
   LEGACY_SETTINGS_KEY,
   LOCAL_SETTINGS_KEY,
   SETTINGS_UPDATED_AT_KEY,
@@ -42,6 +48,9 @@ export const DEFAULT_SETTINGS: StorageSettings = {
     subjectBatchSize: 25,
     maxUniqueSourcesPerJob: 1000,
     cloudNoticeAccepted: false,
+    orchestrationEnabled: true,
+    workerModels: [...DEFAULT_RESEARCH_WORKER_MODELS],
+    leadModel: DEFAULT_RESEARCH_LEAD_MODEL,
   },
   ui: {
     theme: 'system',
@@ -58,12 +67,12 @@ export const DEFAULT_SETTINGS: StorageSettings = {
 export async function getSettings(): Promise<StorageSettings> {
   await migrateLegacySettings();
   const result = await chrome.storage.local.get(LOCAL_SETTINGS_KEY);
-  return deepMerge(DEFAULT_SETTINGS, result[LOCAL_SETTINGS_KEY] || {});
+  return normalizeSettings(deepMerge(DEFAULT_SETTINGS, result[LOCAL_SETTINGS_KEY] || {}));
 }
 
 export async function saveSettings(settings: Partial<StorageSettings>): Promise<void> {
   const current = await getSettings();
-  const merged = deepMerge(current, settings);
+  const merged = normalizeSettings(deepMerge(current, settings));
   await chrome.storage.local.set({
     [LOCAL_SETTINGS_KEY]: merged,
     [SETTINGS_UPDATED_AT_KEY]: Date.now(),
@@ -73,7 +82,9 @@ export async function saveSettings(settings: Partial<StorageSettings>): Promise<
 export function onSettingsChanged(callback: (settings: StorageSettings) => void): () => void {
   const listener = (changes: { [key: string]: chrome.storage.StorageChange }) => {
     if (changes[LOCAL_SETTINGS_KEY]) {
-      callback(deepMerge(DEFAULT_SETTINGS, changes[LOCAL_SETTINGS_KEY].newValue || {}));
+      callback(
+        normalizeSettings(deepMerge(DEFAULT_SETTINGS, changes[LOCAL_SETTINGS_KEY].newValue || {}))
+      );
     }
   };
   chrome.storage.onChanged.addListener(listener);
@@ -92,6 +103,14 @@ function deepMerge(target: any, source: any): any {
   return result;
 }
 
+function normalizeSettings(settings: StorageSettings): StorageSettings {
+  settings.research.workerModels = normalizeCloudModelPool(settings.research.workerModels);
+  if (!isSupportedCloudModel(settings.research.leadModel)) {
+    settings.research.leadModel = DEFAULT_RESEARCH_LEAD_MODEL;
+  }
+  return settings;
+}
+
 export async function clearSettings(): Promise<void> {
   await chrome.storage.local.remove(LOCAL_SETTINGS_KEY);
 }
@@ -101,7 +120,7 @@ export async function applySyncedSettings(
   updatedAt: number
 ): Promise<StorageSettings> {
   const current = await getSettings();
-  const merged = mergeSyncedSettings(current, settings as any);
+  const merged = normalizeSettings(mergeSyncedSettings(current, settings as any));
   await chrome.storage.local.set({
     [LOCAL_SETTINGS_KEY]: merged,
     [SETTINGS_UPDATED_AT_KEY]: updatedAt,
@@ -123,7 +142,7 @@ async function migrateLegacySettings(): Promise<void> {
   if (local[LOCAL_SETTINGS_KEY]) return;
 
   const legacy = await chrome.storage.sync.get(LEGACY_SETTINGS_KEY);
-  const merged = deepMerge(DEFAULT_SETTINGS, legacy[LEGACY_SETTINGS_KEY] || {});
+  const merged = normalizeSettings(deepMerge(DEFAULT_SETTINGS, legacy[LEGACY_SETTINGS_KEY] || {}));
   await chrome.storage.local.set({
     [LOCAL_SETTINGS_KEY]: merged,
     [SETTINGS_UPDATED_AT_KEY]: 0,

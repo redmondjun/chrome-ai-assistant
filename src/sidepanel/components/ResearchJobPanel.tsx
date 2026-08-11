@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { handleAnswerLinkClick } from './message-links';
 import type { ResearchJob, ResearchProgress, ResearchTask } from '@/shared/types';
+import { CLOUD_MODEL_LABELS } from '@/shared/cloud-models';
 
 type ResearchAction = 'PAUSE_RESEARCH' | 'RESUME_RESEARCH' | 'RETRY_RESEARCH' | 'CANCEL_RESEARCH';
 
@@ -61,6 +62,10 @@ export function ResearchJobPanel({ progress }: { progress: ResearchProgress }) {
         <strong>{progressLabel(progress)}</strong>
         <span>{progress.status}</span>
       </div>
+      {progress.leadModel &&
+        ['batch-synthesis', 'final-synthesis'].includes(progress.stage || '') && (
+          <p className="research-model-badge">Lead: {CLOUD_MODEL_LABELS[progress.leadModel]}</p>
+        )}
       <p>{progress.activity}</p>
       <progress value={progress.completedTasks + progress.failedTasks} max={progress.totalTasks} />
       <div className="stream-progress-meta">
@@ -135,6 +140,12 @@ function WorkerDetails({ task, now }: { task: ResearchTask; now: number }) {
       <summary>
         <span>
           <strong>{task.label}</strong>
+          {task.effectiveModel && (
+            <small className="research-model-badge">
+              {CLOUD_MODEL_LABELS[task.effectiveModel]}
+              {task.fallbackUsed ? ' · fallback' : ''}
+            </small>
+          )}
           <small>
             {phaseLabel(task)} · {elapsed}
           </small>

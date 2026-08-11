@@ -63,6 +63,7 @@ export function deriveResearchProgress(job: ResearchJob) {
     sourceBudgetUsed: Math.min(registry.length, sourceBudget),
     sourceBudgetTotal: sourceBudget,
     sourceBudgetOverflow,
+    leadModel: job.orchestration?.enabled ? job.orchestration.leadModel : undefined,
     sourcesRead: succeeded,
     sourcesFailed: failed,
   };

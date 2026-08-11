@@ -26,16 +26,18 @@ interface ToggleProps {
   checked: boolean;
   label: string;
   onChange: (checked: boolean) => void;
+  disabled?: boolean;
 }
 
-export function Toggle({ checked, label, onChange }: ToggleProps) {
+export function Toggle({ checked, label, onChange, disabled = false }: ToggleProps) {
   return (
     <label className="flex items-center gap-2 cursor-pointer">
       <input
         type="checkbox"
         checked={checked}
+        disabled={disabled}
         onChange={event => onChange(event.target.checked)}
-        className="w-4 h-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+        className="w-4 h-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 disabled:opacity-50"
       />
       <span>{label}</span>
     </label>

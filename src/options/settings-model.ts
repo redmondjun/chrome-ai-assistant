@@ -1,3 +1,11 @@
+import type { SupportedCloudModel } from '@/shared/cloud-models';
+import {
+  DEFAULT_RESEARCH_LEAD_MODEL,
+  DEFAULT_RESEARCH_WORKER_MODELS,
+  isSupportedCloudModel,
+  normalizeCloudModelPool,
+} from '@/shared/cloud-models';
+
 export interface ExtensionSettings {
   model: {
     apiKey: string;
@@ -23,6 +31,9 @@ export interface ExtensionSettings {
     subjectBatchSize: number;
     maxUniqueSourcesPerJob: number;
     cloudNoticeAccepted: boolean;
+    orchestrationEnabled: boolean;
+    workerModels: SupportedCloudModel[];
+    leadModel: SupportedCloudModel;
   };
   ui: {
     theme: 'light' | 'dark' | 'system';
@@ -67,6 +78,9 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
     subjectBatchSize: 25,
     maxUniqueSourcesPerJob: 1000,
     cloudNoticeAccepted: false,
+    orchestrationEnabled: true,
+    workerModels: [...DEFAULT_RESEARCH_WORKER_MODELS],
+    leadModel: DEFAULT_RESEARCH_LEAD_MODEL,
   },
   ui: {
     theme: 'system',
@@ -83,7 +97,7 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
 export function mergeSettings(saved?: Partial<ExtensionSettings>): ExtensionSettings {
   if (!saved) return DEFAULT_SETTINGS;
 
-  return {
+  const merged = {
     ...DEFAULT_SETTINGS,
     ...saved,
     model: { ...DEFAULT_SETTINGS.model, ...saved.model },
@@ -92,4 +106,9 @@ export function mergeSettings(saved?: Partial<ExtensionSettings>): ExtensionSett
     ui: { ...DEFAULT_SETTINGS.ui, ...saved.ui },
     privacy: { ...DEFAULT_SETTINGS.privacy, ...saved.privacy },
   };
+  merged.research.workerModels = normalizeCloudModelPool(merged.research.workerModels);
+  if (!isSupportedCloudModel(merged.research.leadModel)) {
+    merged.research.leadModel = DEFAULT_RESEARCH_LEAD_MODEL;
+  }
+  return merged;
 }
