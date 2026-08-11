@@ -1,5 +1,6 @@
 {
   "name": "Chrome AI Assistant",
+  "short_name": "\u200B",
   "version": "1.0.0",
   "manifest_version": 3,
   "description": "AI-powered browser assistant that reads tabs, follows links, and generates documents using NVIDIA Nemotron models",
