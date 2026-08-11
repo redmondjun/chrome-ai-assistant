@@ -5,10 +5,21 @@ import {
   extractReviewResponse,
   formatReviewableRanges,
   isTrustedReviewTrigger,
+  MAX_REVIEW_ATTEMPTS,
+  OPENCODE_ATTEMPT_TIMEOUT_MS,
   parseReviewableLines,
   reviewReadiness,
   validateReviewResponse,
 } from './opencode-review.mjs';
+
+test('keeps all OpenCode review attempts inside the workflow timeout', () => {
+  const workflowTimeoutMs = 20 * 60 * 1000;
+  const setupAndPostingReserveMs = 5 * 60 * 1000;
+  assert.ok(
+    OPENCODE_ATTEMPT_TIMEOUT_MS * MAX_REVIEW_ATTEMPTS <=
+      workflowTimeoutMs - setupAndPostingReserveMs
+  );
+});
 
 test('accepts automatic pull request events and trusted manual commands', () => {
   assert.equal(isTrustedReviewTrigger('pull_request', { pull_request: {} }), true);
