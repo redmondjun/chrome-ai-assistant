@@ -54,6 +54,8 @@ export function ModelSettingsSection({
             <option value="nemotron-3-nano">Nemotron 3 Nano (Fast, 1M ctx)</option>
             <option value="nemotron-3-super">Nemotron 3 Super (Balanced)</option>
             <option value="nemotron-3-ultra">Nemotron 3 Ultra (Best quality)</option>
+            <option value="glm-5.2">GLM 5.2 (Agentic reasoning, 1M ctx)</option>
+            <option value="minimax-m3">MiniMax M3 (Multimodal, 1M ctx)</option>
           </select>
         </Field>
 

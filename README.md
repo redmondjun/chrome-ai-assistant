@@ -38,6 +38,8 @@ Download latest release from GitHub Releases and load as unpacked extension.
    - **Nemotron 3 Nano** - Fast, 1M context, good quality
    - **Nemotron 3 Super** - Balanced speed/quality
    - **Nemotron 3 Ultra** - Best quality, slower
+   - **GLM 5.2** - Agentic reasoning, coding, and long-horizon tasks with 1M context
+   - **MiniMax M3** - Multimodal reasoning, coding, and tool use with 1M context
 4. Toggle **Local Model** for on-device processing (downloads ~2.5GB on first use)
 5. Configure link following behavior
 

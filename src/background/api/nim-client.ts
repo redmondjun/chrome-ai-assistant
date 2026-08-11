@@ -52,6 +52,8 @@ export class NIMClient {
     'nemotron-3-nano': 'nvidia/nemotron-3-nano-30b-a3b',
     'nemotron-3-super': 'nvidia/nemotron-3-super-120b-a12b',
     'nemotron-3-ultra': 'nvidia/nemotron-3-ultra-550b-a55b',
+    'glm-5.2': 'z-ai/glm-5.2',
+    'minimax-m3': 'minimaxai/minimax-m3',
   };
 
   constructor(apiKey: string, baseUrl?: string) {

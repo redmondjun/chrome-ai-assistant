@@ -60,7 +60,13 @@ export interface ReasoningStep {
 }
 
 export interface ModelSettings {
-  cloudModel: 'nemotron-3-nano' | 'nemotron-3-super' | 'nemotron-3-ultra' | 'custom';
+  cloudModel:
+    | 'nemotron-3-nano'
+    | 'nemotron-3-super'
+    | 'nemotron-3-ultra'
+    | 'glm-5.2'
+    | 'minimax-m3'
+    | 'custom';
   customEndpoint?: string;
   apiKey: string;
   useLocal: boolean;

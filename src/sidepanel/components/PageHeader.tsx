@@ -121,6 +121,8 @@ function HeaderActions({
         <option value="nemotron-3-nano">Nano</option>
         <option value="nemotron-3-super">Super</option>
         <option value="nemotron-3-ultra">Ultra</option>
+        <option value="glm-5.2">GLM 5.2</option>
+        <option value="minimax-m3">MiniMax M3</option>
         <option value="custom">Custom</option>
       </select>
       <button
