@@ -44,6 +44,8 @@ export interface ChatChunk {
 
 export const DEFAULT_NIM_BASE_URL = 'https://integrate.api.nvidia.com/v1';
 const REQUEST_TIMEOUT_MS = 120000;
+const MAX_TRANSIENT_ATTEMPTS = 3;
+const RETRY_BASE_DELAY_MS = 1000;
 
 export class NIMClient {
   private apiKey: string;
@@ -78,30 +80,45 @@ export class NIMClient {
   }
 
   async chatCompletion(request: ChatRequest, signal?: AbortSignal): Promise<string> {
-    const requestSignal = createRequestSignal(signal);
-    try {
-      const response = await fetch(`${this.baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${this.apiKey}`,
-        },
-        body: JSON.stringify({
-          ...request,
-          model: this.getModelId(request.model),
-        }),
-        signal: requestSignal.signal,
-      });
+    for (let attempt = 1; attempt <= MAX_TRANSIENT_ATTEMPTS; attempt++) {
+      const requestSignal = createRequestSignal(signal);
+      try {
+        const response = await fetch(`${this.baseUrl}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${this.apiKey}`,
+          },
+          body: JSON.stringify({
+            ...request,
+            model: this.getModelId(request.model),
+          }),
+          signal: requestSignal.signal,
+        });
 
-      if (!response.ok) {
-        throw await this.createApiError(response);
+        if (!response.ok) {
+          const error = await this.createApiError(response);
+          if (attempt === MAX_TRANSIENT_ATTEMPTS || !isTransientStatus(response.status)) {
+            throw error;
+          }
+          const delayMs = getRetryDelay(response, attempt);
+          console.warn('[nim]', 'transient-api-retry', {
+            status: response.status,
+            attempt,
+            nextAttempt: attempt + 1,
+            delayMs,
+          });
+          await waitForRetry(delayMs, signal);
+          continue;
+        }
+
+        const data = await response.json();
+        return data.choices[0]?.message?.content || '';
+      } finally {
+        requestSignal.dispose();
       }
-
-      const data = await response.json();
-      return data.choices[0]?.message?.content || '';
-    } finally {
-      requestSignal.dispose();
     }
+    throw new Error('NIM request failed after transient retries.');
   }
 
   async *streamChatCompletion(request: ChatRequest, signal?: AbortSignal): AsyncGenerator<string> {
@@ -201,6 +218,34 @@ export class NIMClient {
       `${response.status}${response.statusText ? ` ${response.statusText}` : ''}`.trim();
     return new Error(`NIM API error (${status}): ${detail || 'No error details returned'}`);
   }
+}
+
+function isTransientStatus(status: number) {
+  return status === 429 || status === 503;
+}
+
+function getRetryDelay(response: Response, attempt: number) {
+  const retryAfter = response.headers?.get?.('retry-after');
+  const retryAfterSeconds = retryAfter === null ? Number.NaN : Number(retryAfter);
+  if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds >= 0) {
+    return retryAfterSeconds * 1000;
+  }
+  return RETRY_BASE_DELAY_MS * 2 ** (attempt - 1);
+}
+
+function waitForRetry(milliseconds: number, signal?: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      signal?.removeEventListener('abort', abort);
+      resolve();
+    }, milliseconds);
+    const abort = () => {
+      clearTimeout(timeout);
+      reject(signal?.reason);
+    };
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) abort();
+  });
 }
 
 function createRequestSignal(parent?: AbortSignal): { signal: AbortSignal; dispose: () => void } {

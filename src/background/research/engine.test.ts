@@ -58,6 +58,20 @@ describe('Deep Research subject discovery', () => {
         isExternal: false,
       })
     ).toBe(false);
+    expect(
+      isEvidenceLink({
+        url: 'https://wiki.example.com/pages/viewpreviousversions.action?pageId=42',
+        text: 'Page History',
+        isExternal: false,
+      })
+    ).toBe(false);
+    expect(
+      isEvidenceLink({
+        url: 'https://wiki.example.com/exportword?pageId=42',
+        text: 'Export to Word',
+        isExternal: false,
+      })
+    ).toBe(false);
   });
 
   it('keeps unsafe seeds visible but permanently skipped', () => {
@@ -664,6 +678,136 @@ describe('Deep Research worker pool', () => {
     expect(completed.report).toBe('Persisted completed report');
     expect(retried?.progress.activity).toBe(
       'Retrying 1 failed research subjects; reusing 1 validated sources.'
+    );
+  });
+
+  it('retries a job-level synthesis failure without discarding completed summaries', async () => {
+    const completed = createTask('completed');
+    completed.status = 'completed';
+    completed.seedStatus = 'completed';
+    completed.report = 'Persisted completed report';
+    const job = createJob([completed]);
+    const now = Date.now();
+    job.status = 'failed';
+    job.stage = 'batch-synthesis';
+    job.error = 'NIM API error (503): ResourceExhausted';
+    job.batchSummaries = [
+      {
+        batchIndex: 0,
+        kind: 'final',
+        taskIds: [completed.id],
+        summary: 'Persisted batch summary',
+        createdAt: now,
+      },
+    ];
+    job.sourceRegistry = [
+      {
+        key: completed.sourceUrl,
+        url: completed.sourceUrl,
+        title: completed.title,
+        status: 'success',
+        taskIds: [completed.id],
+        evidence: {
+          url: completed.sourceUrl,
+          title: completed.title,
+          category: 'other',
+          excerpt: 'Persisted readable evidence',
+          depth: 0,
+        },
+        retries: 0,
+        cacheHits: 0,
+        createdAt: now,
+        updatedAt: now,
+      },
+    ];
+    jest.mocked(getResearchJob).mockResolvedValue(job);
+
+    const retried = await retryFailedResearchTasks(job.id);
+
+    expect(retried?.status).toBe('queued');
+    expect(retried?.stage).toBe('batch-synthesis');
+    expect(retried?.batchSummaries).toEqual(job.batchSummaries);
+    expect(retried?.sourceRegistry?.[0].evidence?.excerpt).toBe('Persisted readable evidence');
+    expect(retried?.progress.activity).toBe(
+      'Retrying batch-synthesis; reusing 1 validated sources.'
+    );
+  });
+
+  it('skips persisted navigation tasks when an existing job resumes', async () => {
+    const navigation = createTask('Page History');
+    navigation.sourceUrl = 'https://wiki.example.com/pages/viewpreviousversions.action?pageId=42';
+    navigation.pendingSources = [{ url: navigation.sourceUrl, title: navigation.title, depth: 0 }];
+    const evidence = createTask('SQ-2960');
+    const job = createJob([navigation, evidence]);
+    job.question = 'Research all subjects';
+    jest.mocked(getResearchJob).mockResolvedValue(job);
+    jest.mocked(fetchLinkContentInTab).mockResolvedValue({
+      content: 'Readable ticket evidence',
+      title: evidence.title,
+      finalUrl: evidence.sourceUrl,
+      links: [],
+    });
+
+    await runResearchJob(
+      createStageRouter(false),
+      job.id,
+      createSettings(1),
+      { onProgress: jest.fn(), onAnswer: jest.fn(), onDone: jest.fn() },
+      new AbortController().signal
+    );
+
+    expect(navigation.status).toBe('skipped');
+    expect(fetchLinkContentInTab).not.toHaveBeenCalledWith(navigation.sourceUrl, expect.anything());
+    expect(fetchLinkContentInTab).toHaveBeenCalledWith(evidence.sourceUrl, expect.anything());
+  });
+
+  it('continues when a discovery batch summary request is exhausted', async () => {
+    const task = createTask('resilient-summary');
+    const job = createJob([task]);
+    job.question = 'Research all subjects';
+    jest.mocked(getResearchJob).mockResolvedValue(job);
+    jest.mocked(fetchLinkContentInTab).mockResolvedValue({
+      content: 'Readable evidence for a resilient subject',
+      title: task.title,
+      finalUrl: task.sourceUrl,
+      links: [],
+    });
+    const router = createStageRouter(false);
+    router.complete.mockImplementation(async (_question, _context, prompt) => {
+      if (prompt.includes('Combine these seed assessments')) {
+        throw new Error('NIM API error (503): ResourceExhausted');
+      }
+      if (prompt.includes('Return JSON only')) {
+        return {
+          text: JSON.stringify({
+            summary: 'Persisted seed assessment',
+            relevance: 0.9,
+            themes: ['resilience'],
+            evidenceGaps: [],
+            expansionNeeded: false,
+          }),
+          modelUsed: 'cloud' as const,
+        };
+      }
+      return { text: 'Completed research answer', modelUsed: 'cloud' as const };
+    });
+
+    await runResearchJob(
+      router,
+      job.id,
+      createSettings(1),
+      { onProgress: jest.fn(), onAnswer: jest.fn(), onDone: jest.fn() },
+      new AbortController().signal
+    );
+
+    expect(job.status).toBe('completed');
+    expect(job.batchSummaries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'discovery',
+          summary: expect.stringContaining('Persisted seed assessment'),
+        }),
+      ])
     );
   });
 });

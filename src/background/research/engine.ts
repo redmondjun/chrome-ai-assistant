@@ -1,6 +1,6 @@
 import type { ModelRouter } from '../api/router';
 import { classifyLinks } from '../pipeline/analyze';
-import { extractResearchTasks } from './link-policy';
+import { extractResearchTasks, isEvidenceLink } from './link-policy';
 import { buildExpansionPlan } from './expansion-plan';
 import { createResearchCheckpoint, setResearchStage, type ResearchCheckpoint } from './progress';
 import { createSourceRegistry } from './source-registry';
@@ -241,13 +241,23 @@ async function runSeedStage(options: StageOptions) {
       }
     });
     if (!findBatchSummary(job, index, 'discovery')) {
-      const summary = await summarizeDiscoveryBatch(
-        options.router,
-        job.question,
-        batches[index],
-        settings.privacy.localOnly,
-        signal
-      );
+      let summary: string;
+      try {
+        summary = await summarizeDiscoveryBatch(
+          options.router,
+          job.question,
+          batches[index],
+          settings.privacy.localOnly,
+          signal
+        );
+      } catch (error) {
+        if (signal.aborted) throw error;
+        summary = createFallbackBatchSummary(batches[index], 'discovery');
+        await checkpoint(
+          undefined,
+          `Discovery summary for batch ${index + 1} failed; saved completed seed assessments and continued.`
+        );
+      }
       addBatchSummary(job, index, 'discovery', batches[index], summary);
       await checkpoint(undefined, `Saved discovery summary for batch ${index + 1}.`);
     }
@@ -299,13 +309,23 @@ async function runBatchSynthesis(
     job.currentBatch = index + 1;
     await checkpoint(undefined, `Batch synthesis · batch ${index + 1} of ${batches.length}`);
     if (findBatchSummary(job, index, 'final')) continue;
-    const summary = await summarizeFinalBatch(
-      router,
-      job.question,
-      batches[index],
-      settings.privacy.localOnly,
-      signal
-    );
+    let summary: string;
+    try {
+      summary = await summarizeFinalBatch(
+        router,
+        job.question,
+        batches[index],
+        settings.privacy.localOnly,
+        signal
+      );
+    } catch (error) {
+      if (signal.aborted) throw error;
+      summary = createFallbackBatchSummary(batches[index], 'final');
+      await checkpoint(
+        undefined,
+        `Final summary for batch ${index + 1} failed; saved completed subject reports and continued.`
+      );
+    }
     addBatchSummary(job, index, 'final', batches[index], summary);
     job.partialAnswer = createPartialResearchAnswer(job);
     await checkpoint(undefined, `Saved final summary for batch ${index + 1}.`);
@@ -414,7 +434,7 @@ export async function retryFailedResearchTasks(jobId: string): Promise<ResearchJ
   const job = await getResearchJob(jobId);
   if (!job) return undefined;
   const failed = job.tasks.filter(task => task.status === 'failed');
-  if (failed.length === 0) return job;
+  if (failed.length === 0 && job.status !== 'failed') return job;
   failed.forEach(task => {
     task.status = 'queued';
     task.phase = 'queued';
@@ -431,13 +451,21 @@ export async function retryFailedResearchTasks(jobId: string): Promise<ResearchJ
     source => source.status === 'success' && source.evidence
   ).length;
   job.status = 'queued';
-  job.stage = failed.some(task => task.seedStatus === 'queued') ? 'seed-scan' : 'expansion';
+  if (failed.length > 0) {
+    job.stage = failed.some(task => task.seedStatus === 'queued') ? 'seed-scan' : 'expansion';
+  }
   job.finalAnswer = undefined;
-  job.batchSummaries = (job.batchSummaries || []).filter(summary => summary.kind === 'discovery');
-  job.expansionPlan = [];
-  job.synthesisState = undefined;
+  if (failed.length > 0) {
+    job.batchSummaries = (job.batchSummaries || []).filter(summary => summary.kind === 'discovery');
+    job.expansionPlan = [];
+    job.synthesisState = undefined;
+  }
+  job.error = undefined;
   job.progress.status = 'queued';
-  job.progress.activity = `Retrying ${failed.length} failed research subjects; reusing ${reusableSources} validated sources.`;
+  job.progress.activity =
+    failed.length > 0
+      ? `Retrying ${failed.length} failed research subjects; reusing ${reusableSources} validated sources.`
+      : `Retrying ${job.stage || 'research synthesis'}; reusing ${reusableSources} validated sources.`;
   job.updatedAt = Date.now();
   await saveResearchJob(job);
   return job;
@@ -455,6 +483,19 @@ function prepareJob(job: ResearchJob, settings: StorageSettings) {
     job.sourceBudget ||= settings.research.maxUniqueSourcesPerJob;
   }
   job.tasks.forEach(task => {
+    if (
+      !isEvidenceLink({
+        url: task.sourceUrl,
+        text: task.label,
+        context: task.title,
+        isExternal: true,
+      })
+    ) {
+      task.status = 'skipped';
+      task.phase = 'skipped';
+      task.expansionStatus = 'skipped';
+      return;
+    }
     if (task.status === 'running') task.status = 'queued';
     task.decisions ||= [];
     task.pendingSources ||= [];
@@ -522,6 +563,14 @@ function findBatchSummary(
   return job.batchSummaries?.find(
     summary => summary.batchIndex === batchIndex && summary.kind === kind
   );
+}
+
+function createFallbackBatchSummary(tasks: ResearchTask[], kind: ResearchBatchSummary['kind']) {
+  const entries = tasks.flatMap(task => {
+    const content = kind === 'discovery' ? task.seedAssessment?.summary : task.report;
+    return content ? [`${task.label}\nSource: ${task.sourceUrl}\n${content}`] : [];
+  });
+  return entries.join('\n\n---\n\n').slice(0, 20000);
 }
 
 function chunk<T>(items: T[], size: number) {

@@ -104,6 +104,33 @@ describe('NIMClient', () => {
       ).rejects.toThrow('NIM API error (401 Unauthorized): Invalid API key');
     });
 
+    it('retries a transient resource-exhausted response', async () => {
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 503,
+          statusText: 'Service Unavailable',
+          headers: { get: () => '0' },
+          text: async () =>
+            JSON.stringify({
+              error: { message: 'ResourceExhausted: Worker local total request limit reached' },
+            }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ choices: [{ message: { content: 'Recovered response' } }] }),
+        });
+
+      await expect(
+        client.chatCompletion({
+          model: 'nemotron-3-nano',
+          messages: [],
+        })
+      ).resolves.toBe('Recovered response');
+      expect(fetch).toHaveBeenCalledTimes(2);
+    });
+
     it('handles network errors', async () => {
       global.fetch = jest.fn().mockRejectedValue(new Error('Network error'));
 

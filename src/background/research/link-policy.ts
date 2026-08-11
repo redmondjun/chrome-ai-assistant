@@ -78,8 +78,14 @@ function isHttpUrl(url: string) {
 
 function isNavigationLink(link: LinkInfo) {
   const value = `${link.url} ${link.text} ${link.context || ''}`.toLowerCase();
-  return /\/(?:login|logout|people|profile|dashboard|create|calendar|plugins)(?:[/?#\s]|$)/.test(
-    value
+  const label = link.text.trim().toLowerCase();
+  return (
+    /\/(?:login|logout|people|profile|dashboard|create|calendar|plugins|pages\/viewinfo|pages\/viewpreviousversions|pages\/viewpagehierarchy|pages\/viewpagetree|spaces\/spacepermissions)(?:[/?#\s]|$)/.test(
+      value
+    ) ||
+    /^(?:attachments?(?:\s*\(\d+\))?|page history|restrictions|people who can view|analytics|page information|resolved comments?(?:\s*\(\d+\))?|view in hierarchy|view storage format|view source|export to pdf|export to word|import word document|show more|edit profile)$/i.test(
+      label
+    )
   );
 }
 
