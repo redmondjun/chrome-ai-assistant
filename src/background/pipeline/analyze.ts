@@ -79,9 +79,10 @@ export async function analyzeWithReasoning(
   const shouldFollow =
     settings.links.enabled &&
     (explicitLinkRequest ||
-      settings.links.mode === 'deep' ||
-      (settings.links.mode === 'ai-first' &&
-        (await modelShouldFollowLinks(router, question, content.links.length, signal))));
+      (!researchContext &&
+        (settings.links.mode === 'deep' ||
+          (settings.links.mode === 'ai-first' &&
+            (await modelShouldFollowLinks(router, question, content.links.length, signal))))));
   logStage('link-decision', { shouldFollow });
 
   let context = content.text.slice(0, 20000);
