@@ -6,6 +6,8 @@ A Chrome extension that uses NVIDIA Nemotron models to read browser tabs, follow
 
 - **Read any tab** - Extracts full page content including text, links, and metadata
 - **Follow links intelligently** - AI classifies link relevance before fetching (configurable depth/pages)
+- **Attach multiple pages** - Save open tabs or pasted URLs as reusable, conversation-specific context
+- **Scalable Deep Research** - Investigates hundreds of sources with bounded batched model requests
 - **Hybrid AI** - Routes simple tasks to local Nemotron Mini 4B, complex tasks to cloud NIM (Nemotron 3 Nano/Super/Ultra)
 - **Full transparency** - Shows reasoning steps and every link visited with relevance scores
 - **Document generation** - Creates reports, summaries, analyses from gathered content
@@ -75,6 +77,26 @@ remain queued in local storage and synchronize after local-only mode is disabled
    - `"Follow the pricing links and create a comparison table"`
    - `"Write a technical report based on this documentation and its references"`
    - `"Extract all API endpoints mentioned here and in linked pages"`
+
+### Attaching additional pages
+
+Use **Attach pages** in the side panel when a request needs context from more than the active tab.
+
+- Choose another readable open tab or paste an HTTP(S) URL.
+- Remembered pages remain in the current Chrome profile after Chrome restarts.
+- Select remembered pages independently for each conversation. Clearing a selection detaches the
+  page without deleting it from the remembered-page library.
+- The extension stores a snapshot when a page is added. Requests continue using that snapshot until
+  you choose **Refresh**; a failed refresh preserves the previous snapshot and displays a warning.
+- Deep Research always uses selected snapshots as grounding context. It follows links from an
+  attached page only when the model determines that those links are relevant to the request.
+
+Attached pages and authenticated retrieval are read-only. The assistant can draft content grounded
+in those pages, but it does not edit Confluence, Jira, or other authenticated sites.
+
+For research jobs with many subjects, the extension collects source evidence first and analyzes it
+in bounded batches. The persisted request budget prevents a large ticket list from creating one
+model request per ticket and exhausting the model worker.
 
 ## Debugging a Chat
 
@@ -154,7 +176,8 @@ organization.
 - **UI**: React 18, Tailwind CSS
 - **Local LLM**: `@wllama/wllama` (llama.cpp WASM)
 - **Cloud API**: NVIDIA NIM (OpenAI-compatible)
-- **Storage**: IndexedDB (models), chrome.storage.sync (settings)
+- **Storage**: IndexedDB (models and research jobs), chrome.storage.local (chats and saved page
+  snapshots), chrome.storage.sync (non-secret settings)
 
 ## Development
 
@@ -171,6 +194,8 @@ npm run typecheck # Run TypeScript check
 - **Local-only mode**: All processing happens on-device, no data leaves your browser
 - **Cloud mode**: Page content sent to NVIDIA NIM API (your API key, your account)
 - **No telemetry**: No usage analytics or tracking
+- **Device-local page library**: Saved page URLs, extracted text, and conversation selections are
+  stored only in the current Chrome profile and are not included in account sync
 - **Open source**: Full code auditability
 
 ## Model Details
