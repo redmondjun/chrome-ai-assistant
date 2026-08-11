@@ -15,6 +15,7 @@ interface PageHeaderProps {
   onConversationChange: (id: string) => void;
   onNewConversation: () => void;
   conversationBusy: boolean;
+  discreet?: boolean;
 }
 
 export function PageHeader({
@@ -30,7 +31,29 @@ export function PageHeader({
   onConversationChange,
   onNewConversation,
   conversationBusy,
+  discreet = false,
 }: PageHeaderProps) {
+  if (discreet) {
+    return (
+      <header className="page-header page-header-discreet">
+        <PageContext page={page} isLoading={isLoading} error={error} onRetry={onRetry} />
+        <div className="brand-row">
+          <HeaderActions
+            model={model}
+            onModelChange={onModelChange}
+            onOpenSettings={onOpenSettings}
+            conversations={conversations}
+            activeConversationId={activeConversationId}
+            onConversationChange={onConversationChange}
+            onNewConversation={onNewConversation}
+            conversationBusy={conversationBusy}
+            discreet
+          />
+        </div>
+      </header>
+    );
+  }
+
   return (
     <header className="page-header">
       <div className="brand-row">
@@ -44,6 +67,7 @@ export function PageHeader({
           onConversationChange={onConversationChange}
           onNewConversation={onNewConversation}
           conversationBusy={conversationBusy}
+          discreet={false}
         />
       </div>
       <PageContext page={page} isLoading={isLoading} error={error} onRetry={onRetry} />
@@ -71,6 +95,7 @@ function HeaderActions({
   onConversationChange,
   onNewConversation,
   conversationBusy,
+  discreet = false,
 }: Pick<
   PageHeaderProps,
   | 'model'
@@ -81,6 +106,7 @@ function HeaderActions({
   | 'onConversationChange'
   | 'onNewConversation'
   | 'conversationBusy'
+  | 'discreet'
 >) {
   return (
     <div className="header-actions">
@@ -96,35 +122,43 @@ function HeaderActions({
       >
         {conversations.map(conversation => (
           <option key={conversation.id} value={conversation.id}>
-            {conversation.title}
+            {discreet && conversation.title === 'New chat'
+              ? 'Untitled session'
+              : conversation.title}
           </option>
         ))}
       </select>
       <AccountButton onOpenSettings={onOpenSettings} />
       <button
-        className="new-chat-button"
+        className={`new-chat-button ${discreet ? 'new-session-button' : ''}`}
         type="button"
         disabled={conversationBusy}
         onClick={onNewConversation}
+        aria-label={discreet ? 'Start new session' : undefined}
+        title={discreet ? 'Start new session' : undefined}
       >
-        New chat
+        {discreet ? <span aria-hidden="true">+</span> : 'New chat'}
       </button>
-      <label className="sr-only" htmlFor="model-select">
-        AI model
-      </label>
-      <select
-        id="model-select"
-        className="model-select"
-        value={model}
-        onChange={event => onModelChange(event.target.value as ModelSettings['cloudModel'])}
-      >
-        <option value="nemotron-3-nano">Nano</option>
-        <option value="nemotron-3-super">Super</option>
-        <option value="nemotron-3-ultra">Ultra</option>
-        <option value="glm-5.2">GLM 5.2</option>
-        <option value="minimax-m3">MiniMax M3</option>
-        <option value="custom">Custom</option>
-      </select>
+      {!discreet && (
+        <>
+          <label className="sr-only" htmlFor="model-select">
+            AI model
+          </label>
+          <select
+            id="model-select"
+            className="model-select"
+            value={model}
+            onChange={event => onModelChange(event.target.value as ModelSettings['cloudModel'])}
+          >
+            <option value="nemotron-3-nano">Nano</option>
+            <option value="nemotron-3-super">Super</option>
+            <option value="nemotron-3-ultra">Ultra</option>
+            <option value="glm-5.2">GLM 5.2</option>
+            <option value="minimax-m3">MiniMax M3</option>
+            <option value="custom">Custom</option>
+          </select>
+        </>
+      )}
       <button
         className="icon-button"
         type="button"

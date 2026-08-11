@@ -50,6 +50,11 @@ const savedSettings: StorageSettings = {
   privacy: { localOnly: false, clearOnClose: false },
 };
 
+const confluenceSettings = {
+  ...savedSettings,
+  ui: { ...savedSettings.ui, theme: 'confluence' },
+} satisfies StorageSettings;
+
 function mockMissingLocalModel() {
   (indexedDB.open as jest.Mock).mockImplementation(() => {
     const getRequest: any = {};
@@ -212,6 +217,60 @@ describe('side panel App', () => {
         ])
       );
     });
+  });
+
+  it('applies the discreet Confluence presentation without changing chat behavior', async () => {
+    (chrome.runtime.sendMessage as jest.Mock).mockImplementation(async message => {
+      if (message.type === 'GET_TAB_CONTENT') return { type: 'TAB_CONTENT', content: page };
+      if (message.type === 'GET_SETTINGS') return { settings: confluenceSettings };
+      if (message.type === 'AUTH_GET_STATE') {
+        return { account: { configured: false, user: null } };
+      }
+      return { ok: true };
+    });
+
+    render(<App />);
+
+    expect(await screen.findByText('Example article')).toBeInTheDocument();
+    expect(document.documentElement.dataset.theme).toBe('confluence');
+    expect(screen.getByRole('textbox', { name: 'Add a note or request' })).toBeInTheDocument();
+    expect(screen.getByText('Include linked pages')).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Untitled session' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Start new session' })).toBeInTheDocument();
+    expect(screen.queryByText('Page Assistant')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('AI model')).not.toBeInTheDocument();
+    expect(screen.queryByText('Deep Research')).not.toBeInTheDocument();
+    expect(screen.queryByText('New chat')).not.toBeInTheDocument();
+  });
+
+  it('uses neutral but explicit cloud disclosure for linked pages', async () => {
+    (chrome.runtime.sendMessage as jest.Mock).mockImplementation(async message => {
+      if (message.type === 'GET_TAB_CONTENT') return { type: 'TAB_CONTENT', content: page };
+      if (message.type === 'GET_SETTINGS') return { settings: confluenceSettings };
+      if (message.type === 'AUTH_GET_STATE') {
+        return { account: { configured: false, user: null } };
+      }
+      return { ok: true };
+    });
+
+    render(<App />);
+
+    const input = await screen.findByRole('textbox', { name: 'Add a note or request' });
+    fireEvent.click(screen.getByRole('checkbox'));
+    fireEvent.change(input, { target: { value: 'Review the linked pages' } });
+    fireEvent.click(screen.getByRole('button', { name: /send message/i }));
+
+    expect(window.confirm).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /^Including linked pages sends internal page excerpts to https:\/\/integrate\.api\.nvidia\.com\./
+      )
+    );
+    expect(window.confirm).not.toHaveBeenCalledWith(expect.stringMatching(/Deep Research/));
+    await waitFor(() =>
+      expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'START_RESEARCH', question: 'Review the linked pages' })
+      )
+    );
   });
 
   it('stops an in-progress response', async () => {

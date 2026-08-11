@@ -175,4 +175,51 @@
   .typing i:nth-child(3) {
     animation-delay: 0.3s;
   }
+
+  :root[data-theme='confluence'] {
+    .message {
+      max-width: 100%;
+      margin-bottom: 16px;
+    }
+
+    .message-assistant {
+      width: 100%;
+    }
+
+    .message-assistant .message-body {
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+    }
+
+    .message-assistant .message-content {
+      padding: 0;
+    }
+
+    .message-user {
+      max-width: 88%;
+    }
+
+    .message-user .message-body {
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      background: var(--canvas);
+      color: var(--text);
+    }
+
+    .message-content {
+      line-height: 1.5;
+    }
+
+    .message-content pre,
+    .stream-progress {
+      border-radius: 3px;
+      box-shadow: none;
+    }
+
+    .stream-progress {
+      background: var(--canvas);
+      border-color: var(--border);
+    }
+  }
 }

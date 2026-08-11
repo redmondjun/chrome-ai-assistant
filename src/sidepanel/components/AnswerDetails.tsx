@@ -6,12 +6,14 @@ interface AnswerDetailsProps {
   reasoning?: ReasoningStep[];
   links?: LinkVisit[];
   isStreaming?: boolean;
+  discreet?: boolean;
 }
 
 export function AnswerDetails({
   reasoning = [],
   links = [],
   isStreaming = false,
+  discreet = false,
 }: AnswerDetailsProps) {
   if (reasoning.length === 0 && links.length === 0) return null;
 
@@ -20,7 +22,7 @@ export function AnswerDetails({
       {reasoning.length > 0 && (
         <details className="answer-detail" open={isStreaming}>
           <summary>
-            Reasoning <span>{reasoning.length}</span>
+            {discreet ? 'Activity' : 'Reasoning'} <span>{reasoning.length}</span>
           </summary>
           <div className="details-content">
             <ReasoningList steps={reasoning} />

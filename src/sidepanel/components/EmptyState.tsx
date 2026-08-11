@@ -9,14 +9,15 @@ const SUGGESTED_PROMPTS = [
 interface EmptyStateProps {
   enabled: boolean;
   onPrompt: (prompt: string) => void;
+  discreet?: boolean;
 }
 
-export function EmptyState({ enabled, onPrompt }: EmptyStateProps) {
+export function EmptyState({ enabled, onPrompt, discreet = false }: EmptyStateProps) {
   return (
-    <section className="empty-state">
-      <span className="empty-mark">N</span>
-      <h1>Understand any page, faster.</h1>
-      <p>Ask a question or start with one of these.</p>
+    <section className={`empty-state ${discreet ? 'empty-state-discreet' : ''}`}>
+      {!discreet && <span className="empty-mark">N</span>}
+      {!discreet && <h1>Understand any page, faster.</h1>}
+      {!discreet && <p>Ask a question or start with one of these.</p>}
       <div className="prompt-list">
         {SUGGESTED_PROMPTS.map(prompt => (
           <button key={prompt} type="button" disabled={!enabled} onClick={() => onPrompt(prompt)}>

@@ -4,7 +4,13 @@ import type { ResearchJob, ResearchProgress, ResearchTask } from '@/shared/types
 
 type ResearchAction = 'PAUSE_RESEARCH' | 'RESUME_RESEARCH' | 'RETRY_RESEARCH' | 'CANCEL_RESEARCH';
 
-export function ResearchJobPanel({ progress }: { progress: ResearchProgress }) {
+export function ResearchJobPanel({
+  progress,
+  discreet = false,
+}: {
+  progress: ResearchProgress;
+  discreet?: boolean;
+}) {
   const [job, setJob] = useState<ResearchJob>();
   const [now, setNow] = useState(Date.now);
 
@@ -54,22 +60,28 @@ export function ResearchJobPanel({ progress }: { progress: ResearchProgress }) {
   return (
     <section
       className="research-job"
-      aria-label="Deep Research progress"
+      aria-label={discreet ? 'Linked page progress' : 'Deep Research progress'}
       onClick={handleAnswerLinkClick}
     >
       <div className="research-job-heading">
-        <strong>{progressLabel(progress)}</strong>
+        <strong>{progressLabel(progress, discreet)}</strong>
         <span>{progress.status}</span>
       </div>
-      <p>{progress.activity}</p>
+      {!discreet && <p>{progress.activity}</p>}
       <progress value={progress.completedTasks + progress.failedTasks} max={progress.totalTasks} />
       <div className="stream-progress-meta">
         <span>
-          {progress.completedTasks}/{progress.totalTasks} subjects
+          {progress.completedTasks}/{progress.totalTasks} {discreet ? 'pages' : 'subjects'}
         </span>
-        <span>{progress.activeWorkers} workers active</span>
-        <span>{progress.seedsScanned ?? 0} seeds scanned</span>
-        <span>{progress.subjectsExpanded ?? 0} subjects expanded</span>
+        <span>
+          {progress.activeWorkers} {discreet ? 'reviews' : 'workers'} active
+        </span>
+        <span>
+          {progress.seedsScanned ?? 0} {discreet ? 'starting pages checked' : 'seeds scanned'}
+        </span>
+        <span>
+          {progress.subjectsExpanded ?? 0} {discreet ? 'linked pages added' : 'subjects expanded'}
+        </span>
         <span>{progress.uniqueSourcesSucceeded ?? progress.sourcesRead} unique sources read</span>
         {(progress.uniqueSourcesFailed ?? progress.sourcesFailed) > 0 && (
           <span className="danger-text">
@@ -104,7 +116,7 @@ export function ResearchJobPanel({ progress }: { progress: ResearchProgress }) {
           <Action label="Cancel" onClick={() => sendAction('CANCEL_RESEARCH')} />
         )}
       </div>
-      {job && <WorkerList tasks={job.tasks} now={now} />}
+      {job && <WorkerList tasks={job.tasks} now={now} discreet={discreet} />}
     </section>
   );
 }
@@ -117,17 +129,33 @@ function Action({ label, onClick }: { label: string; onClick: () => void }) {
   );
 }
 
-function WorkerList({ tasks, now }: { tasks: ResearchTask[]; now: number }) {
+function WorkerList({
+  tasks,
+  now,
+  discreet,
+}: {
+  tasks: ResearchTask[];
+  now: number;
+  discreet: boolean;
+}) {
   return (
-    <div className="research-workers" aria-label="Research workers">
+    <div className="research-workers" aria-label={discreet ? 'Linked pages' : 'Research workers'}>
       {tasks.map(task => (
-        <WorkerDetails key={task.id} task={task} now={now} />
+        <WorkerDetails key={task.id} task={task} now={now} discreet={discreet} />
       ))}
     </div>
   );
 }
 
-function WorkerDetails({ task, now }: { task: ResearchTask; now: number }) {
+function WorkerDetails({
+  task,
+  now,
+  discreet,
+}: {
+  task: ResearchTask;
+  now: number;
+  discreet: boolean;
+}) {
   const elapsed = formatDuration(Math.max(0, Math.floor((now - task.phaseStartedAt) / 1000)));
   const idleSeconds = Math.max(0, Math.floor((now - task.lastActivityAt) / 1000));
   return (
@@ -136,7 +164,7 @@ function WorkerDetails({ task, now }: { task: ResearchTask; now: number }) {
         <span>
           <strong>{task.label}</strong>
           <small>
-            {phaseLabel(task)} · {elapsed}
+            {phaseLabel(task, discreet)} · {elapsed}
           </small>
         </span>
         <span>
@@ -146,8 +174,8 @@ function WorkerDetails({ task, now }: { task: ResearchTask; now: number }) {
       </summary>
       {idleSeconds >= 30 && task.status === 'running' && (
         <p className="stream-progress-warning">
-          No worker update for {formatDuration(idleSeconds)}. The current page or model operation
-          may still be running.
+          No {discreet ? 'page' : 'worker'} update for {formatDuration(idleSeconds)}. The current
+          page or {discreet ? 'processing step' : 'model operation'} may still be running.
         </p>
       )}
       {task.currentSource && (
@@ -163,11 +191,11 @@ function WorkerDetails({ task, now }: { task: ResearchTask; now: number }) {
         Seed: {task.seedStatus || 'queued'} · Expansion: {task.expansionStatus || 'waiting'}
       </p>
       {task.error && <p className="danger-text">{task.error}</p>}
-      <WorkerReasoning task={task} />
+      <WorkerReasoning task={task} discreet={discreet} />
       <WorkerSources task={task} />
       {task.report && (
         <details>
-          <summary>Worker report</summary>
+          <summary>{discreet ? 'Page report' : 'Worker report'}</summary>
           <pre>{task.report}</pre>
         </details>
       )}
@@ -175,10 +203,12 @@ function WorkerDetails({ task, now }: { task: ResearchTask; now: number }) {
   );
 }
 
-function WorkerReasoning({ task }: { task: ResearchTask }) {
+function WorkerReasoning({ task, discreet }: { task: ResearchTask; discreet: boolean }) {
   return (
     <details>
-      <summary>Reasoning ({task.reasoning.length})</summary>
+      <summary>
+        {discreet ? 'Activity' : 'Reasoning'} ({task.reasoning.length})
+      </summary>
       <ol>
         {task.reasoning.map((step, index) => (
           <li key={`${step.timestamp}-${index}`}>{step.thought}</li>
@@ -214,21 +244,26 @@ function WorkerSources({ task }: { task: ResearchTask }) {
   );
 }
 
-function phaseLabel(task: ResearchTask) {
-  if (task.seedStatus === 'running') return 'scanning seed';
+function phaseLabel(task: ResearchTask, discreet: boolean) {
+  if (task.seedStatus === 'running') return discreet ? 'checking starting page' : 'scanning seed';
   if (task.seedStatus === 'completed' && task.expansionStatus === 'waiting')
-    return 'waiting for expansion plan';
-  if (task.expansionStatus === 'running') return 'expanding evidence';
+    return discreet ? 'waiting for linked-page plan' : 'waiting for expansion plan';
+  if (task.expansionStatus === 'running')
+    return discreet ? 'reviewing linked pages' : 'expanding evidence';
   if (task.status === 'completed') return 'included in completed batch';
   if (task.phase === 'opening') return 'waiting for page';
-  if (task.phase === 'scoring') return 'waiting for AI scoring';
-  if (task.phase === 'analyzing') return 'waiting for AI analysis';
+  if (task.phase === 'scoring') return discreet ? 'ranking sources' : 'waiting for AI scoring';
+  if (task.phase === 'analyzing') return discreet ? 'reviewing content' : 'waiting for AI analysis';
   if (task.phase === 'reading') return 'reading page';
   return task.phase;
 }
 
-function progressLabel(progress: ResearchProgress) {
-  const stage = progress.stage ? stageLabel(progress.stage) : progress.activity;
+function progressLabel(progress: ResearchProgress, discreet: boolean) {
+  const stage = progress.stage
+    ? stageLabel(progress.stage, discreet)
+    : discreet
+      ? 'Reviewing linked pages'
+      : progress.activity;
   if (
     progress.currentBatch &&
     progress.totalBatches &&
@@ -239,13 +274,14 @@ function progressLabel(progress: ResearchProgress) {
   return stage || progress.activity;
 }
 
-function stageLabel(stage: NonNullable<ResearchProgress['stage']>) {
-  if (stage === 'seed-scan') return 'Seed scan';
-  if (stage === 'expansion-planning') return 'Planning expansion';
-  if (stage === 'expansion') return 'Selective expansion';
-  if (stage === 'batch-synthesis') return 'Batch synthesis';
-  if (stage === 'final-synthesis') return 'Final synthesis';
-  return 'Research complete';
+function stageLabel(stage: NonNullable<ResearchProgress['stage']>, discreet: boolean) {
+  if (stage === 'seed-scan') return discreet ? 'Starting page review' : 'Seed scan';
+  if (stage === 'expansion-planning')
+    return discreet ? 'Planning linked pages' : 'Planning expansion';
+  if (stage === 'expansion') return discreet ? 'Reviewing linked pages' : 'Selective expansion';
+  if (stage === 'batch-synthesis') return discreet ? 'Preparing section' : 'Batch synthesis';
+  if (stage === 'final-synthesis') return discreet ? 'Preparing content' : 'Final synthesis';
+  return discreet ? 'Link review complete' : 'Research complete';
 }
 
 function formatDuration(totalSeconds: number) {

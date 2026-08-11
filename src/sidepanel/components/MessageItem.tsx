@@ -6,7 +6,13 @@ import { ResearchJobPanel } from './ResearchJobPanel';
 import { StreamingProgress } from './StreamingProgress';
 import type { ChatMessage } from '@/shared/types';
 
-export function MessageItem({ message }: { message: ChatMessage }) {
+export function MessageItem({
+  message,
+  discreet = false,
+}: {
+  message: ChatMessage;
+  discreet?: boolean;
+}) {
   const isUser = message.role === 'user';
   const isError = !isUser && message.content.startsWith('Error:');
   const renderedContent = useMemo(
@@ -23,17 +29,18 @@ export function MessageItem({ message }: { message: ChatMessage }) {
 
   return (
     <article className={className}>
-      {!isUser && <AssistantMetadata message={message} />}
+      {!isUser && !discreet && <AssistantMetadata message={message} />}
       {message.researchProgress ? (
-        <ResearchJobPanel progress={message.researchProgress} />
+        <ResearchJobPanel progress={message.researchProgress} discreet={discreet} />
       ) : (
-        message.isStreaming && <StreamingProgress message={message} />
+        message.isStreaming && <StreamingProgress message={message} discreet={discreet} />
       )}
       {!isUser && (
         <AnswerDetails
           reasoning={message.reasoning}
           links={message.linkVisits}
           isStreaming={message.isStreaming}
+          discreet={discreet}
         />
       )}
       <div className="message-body">

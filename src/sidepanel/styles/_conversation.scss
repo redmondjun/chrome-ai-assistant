@@ -61,4 +61,31 @@
     opacity: 0.5;
     cursor: not-allowed;
   }
+
+  :root[data-theme='confluence'] {
+    .conversation {
+      padding: 20px 18px 26px;
+      background: var(--surface);
+    }
+
+    .empty-state-discreet {
+      margin-top: clamp(20px, 8vh, 56px);
+    }
+
+    .empty-state-discreet .prompt-list {
+      max-width: 360px;
+    }
+
+    .prompt-list button {
+      padding: 9px 10px;
+      border-color: transparent;
+      border-radius: 3px;
+      background: var(--canvas);
+    }
+
+    .prompt-list button:hover:not(:disabled) {
+      border-color: var(--border);
+      background: #ebecf0;
+    }
+  }
 }

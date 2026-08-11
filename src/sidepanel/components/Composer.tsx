@@ -11,6 +11,7 @@ interface ComposerProps {
   deepResearch?: boolean;
   onDeepResearchChange?: (enabled: boolean) => void;
   researchSubjectCount?: number;
+  discreet?: boolean;
 }
 
 export function Composer({
@@ -24,6 +25,7 @@ export function Composer({
   deepResearch = false,
   onDeepResearchChange,
   researchSubjectCount = 0,
+  discreet = false,
 }: ComposerProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const disabled = !pageReady || busy;
@@ -55,11 +57,15 @@ export function Composer({
           disabled={generating}
           onChange={event => onDeepResearchChange?.(event.target.checked)}
         />
-        <span>Deep Research</span>
+        <span>{discreet ? 'Include linked pages' : 'Deep Research'}</span>
         <small>
-          {researchSubjectCount > 0
-            ? `${researchSubjectCount} researchable link${researchSubjectCount === 1 ? '' : 's'} detected`
-            : 'Use independent workers to investigate links from this page'}
+          {discreet
+            ? researchSubjectCount > 0
+              ? `${researchSubjectCount} linked page${researchSubjectCount === 1 ? '' : 's'} available`
+              : 'Review relevant links from this page'
+            : researchSubjectCount > 0
+              ? `${researchSubjectCount} researchable link${researchSubjectCount === 1 ? '' : 's'} detected`
+              : 'Use independent workers to investigate links from this page'}
         </small>
       </label>
       <div className="composer">
@@ -70,8 +76,14 @@ export function Composer({
           disabled={disabled}
           onChange={event => onChange(event.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={pageReady ? 'Ask about this page…' : 'Page unavailable'}
-          aria-label="Ask about this page"
+          placeholder={
+            pageReady
+              ? discreet
+                ? 'Add a note or request…'
+                : 'Ask about this page…'
+              : 'Page unavailable'
+          }
+          aria-label={discreet ? 'Add a note or request' : 'Ask about this page'}
         />
         {generating ? (
           <StopButton onClick={onStop} />

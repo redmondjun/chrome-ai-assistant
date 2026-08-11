@@ -1,11 +1,16 @@
 import React, { useState } from 'react';
 
 interface ApiKeyOnboardingProps {
+  discreet?: boolean;
   onSave: (apiKey: string) => Promise<void>;
   onOpenSettings: () => void;
 }
 
-export function ApiKeyOnboarding({ onSave, onOpenSettings }: ApiKeyOnboardingProps) {
+export function ApiKeyOnboarding({
+  discreet = false,
+  onSave,
+  onOpenSettings,
+}: ApiKeyOnboardingProps) {
   const [apiKey, setApiKey] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
@@ -25,10 +30,14 @@ export function ApiKeyOnboarding({ onSave, onOpenSettings }: ApiKeyOnboardingPro
   return (
     <main className="onboarding">
       <section className="setup-card">
-        <span className="setup-mark">N</span>
+        {!discreet && <span className="setup-mark">N</span>}
         <p className="eyebrow">One-time setup</p>
-        <h1>Connect your AI assistant</h1>
-        <p>Add an NVIDIA API key to ask questions about any page you visit.</p>
+        <h1>{discreet ? 'Complete setup' : 'Connect your AI assistant'}</h1>
+        <p>
+          {discreet
+            ? 'Add an NVIDIA API key to enable page tools.'
+            : 'Add an NVIDIA API key to ask questions about any page you visit.'}
+        </p>
         <form onSubmit={handleSubmit}>
           <label htmlFor="api-key">NVIDIA API key</label>
           <input

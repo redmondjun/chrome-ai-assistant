@@ -78,4 +78,16 @@
   .danger-text {
     color: var(--danger) !important;
   }
+
+  :root[data-theme='confluence'] {
+    .answer-detail {
+      border-radius: 3px;
+      background: var(--canvas);
+    }
+
+    .answer-detail summary span {
+      border-radius: 3px;
+      background: #ebecf0;
+    }
+  }
 }

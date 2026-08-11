@@ -65,6 +65,7 @@ export function useSidepanelSettings() {
 
   return {
     model,
+    theme,
     research,
     localOnly,
     isLoaded,

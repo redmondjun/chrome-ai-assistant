@@ -1,7 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import type { ChatMessage, LinkVisit } from '@/shared/types';
 
-export function StreamingProgress({ message }: { message: ChatMessage }) {
+export function StreamingProgress({
+  message,
+  discreet = false,
+}: {
+  message: ChatMessage;
+  discreet?: boolean;
+}) {
   const [now, setNow] = useState(Date.now);
   const [lastActivityAt, setLastActivityAt] = useState(Date.now);
 
@@ -20,7 +26,7 @@ export function StreamingProgress({ message }: { message: ChatMessage }) {
   const failedCount = visits.filter(visit => visit.status === 'failed').length;
   const elapsedSeconds = Math.max(0, Math.floor((now - message.timestamp) / 1000));
   const idleSeconds = Math.max(0, Math.floor((now - lastActivityAt) / 1000));
-  const activity = getCurrentActivity(message, activeVisit);
+  const activity = getCurrentActivity(message, activeVisit, discreet);
 
   return (
     <div className="stream-progress" role="status" aria-live="polite">
@@ -53,14 +59,19 @@ function getLatestVisits(visits: LinkVisit[]) {
   return [...latestByUrl.values()];
 }
 
-function getCurrentActivity(message: ChatMessage, activeVisit?: LinkVisit) {
+function getCurrentActivity(
+  message: ChatMessage,
+  activeVisit: LinkVisit | undefined,
+  discreet: boolean
+) {
   if (activeVisit) return `Opening ${activeVisit.title || activeVisit.url}`;
   const latestStep = message.reasoning?.at(-1);
   if (latestStep?.type === 'classify') return 'Deciding which sources are needed';
   if (latestStep?.type === 'fetch') return 'Preparing source retrieval';
   if (latestStep?.type === 'extract') return 'Reading retrieved content';
-  if (latestStep?.type === 'synthesize' || message.content) return 'Generating the answer';
-  return 'Starting analysis';
+  if (latestStep?.type === 'synthesize' || message.content)
+    return discreet ? 'Preparing content' : 'Generating the answer';
+  return discreet ? 'Preparing request' : 'Starting analysis';
 }
 
 function formatDuration(totalSeconds: number) {

@@ -8,6 +8,7 @@ interface ResearchOptions {
   cloudNoticeAccepted: boolean;
   cloudEndpoint: string;
   acceptCloudNotice: () => Promise<void>;
+  discreet: boolean;
 }
 
 export function useChat(page: TabContent | null, researchOptions: ResearchOptions) {
@@ -198,7 +199,9 @@ export function useChat(page: TabContent | null, researchOptions: ResearchOption
 
       if (deepResearch && !researchOptions.localOnly && !researchOptions.cloudNoticeAccepted) {
         const accepted = window.confirm(
-          `Deep Research sends internal page excerpts to ${researchOptions.cloudEndpoint || 'the configured NVIDIA endpoint'}. Continue only if this endpoint is approved for company data.`
+          researchOptions.discreet
+            ? `Including linked pages sends internal page excerpts to ${researchOptions.cloudEndpoint || 'the configured NVIDIA endpoint'}. Continue only if this endpoint is approved for company data.`
+            : `Deep Research sends internal page excerpts to ${researchOptions.cloudEndpoint || 'the configured NVIDIA endpoint'}. Continue only if this endpoint is approved for company data.`
         );
         if (!accepted) return;
         await researchOptions.acceptCloudNotice();

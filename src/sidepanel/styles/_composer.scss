@@ -5,6 +5,11 @@
     background: var(--surface);
     border-top: 1px solid var(--border);
   }
+
+  :root[data-theme='confluence'] .composer-wrap {
+    padding: 10px 16px 12px;
+    background: var(--surface);
+  }
 }
 
 @mixin controls {
@@ -74,5 +79,27 @@
     text-align: center;
     color: var(--muted);
     font-size: 9px;
+  }
+
+  :root[data-theme='confluence'] {
+    .composer {
+      padding: 4px 4px 4px 9px;
+      border-radius: 3px;
+      box-shadow: none;
+    }
+
+    .composer:focus-within {
+      box-shadow: 0 0 0 1px var(--accent);
+    }
+
+    .composer button {
+      width: 32px;
+      height: 32px;
+      border-radius: 3px;
+    }
+
+    .composer-wrap > small {
+      text-align: left;
+    }
   }
 }

@@ -105,4 +105,21 @@
     color: var(--danger);
     font-size: 11px;
   }
+
+  :root[data-theme='confluence'] {
+    .page-attachments > button,
+    .page-attachments-panel,
+    .page-url-form input,
+    .page-url-form button,
+    .page-attachments-heading button,
+    .open-tab-list > button,
+    .saved-page,
+    .saved-page button {
+      border-radius: 3px;
+    }
+
+    .page-attachments-panel {
+      box-shadow: none;
+    }
+  }
 }

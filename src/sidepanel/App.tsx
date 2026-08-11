@@ -14,11 +14,13 @@ import type { LinkInfo } from '@/shared/types';
 export default function App() {
   const activeTab = useActiveTab();
   const settings = useSidepanelSettings();
+  const discreet = settings.theme === 'confluence';
   const chat = useChat(activeTab.content, {
     localOnly: settings.localOnly,
     cloudNoticeAccepted: settings.research.cloudNoticeAccepted,
     cloudEndpoint: settings.model.customEndpoint || 'https://integrate.api.nvidia.com',
     acceptCloudNotice: settings.acceptCloudNotice,
+    discreet,
   });
   const savedPages = useSavedPages(chat.activeConversationId);
 
@@ -31,6 +33,7 @@ export default function App() {
   if (!settings.model.apiKey.trim() && !settings.localModelReady) {
     return (
       <ApiKeyOnboarding
+        discreet={discreet}
         onSave={apiKey => settings.updateModel({ apiKey, useLocal: false })}
         onOpenSettings={openSettings}
       />
@@ -54,11 +57,13 @@ export default function App() {
         onConversationChange={chat.selectConversation}
         onNewConversation={chat.startNewConversation}
         conversationBusy={chat.isLoading}
+        discreet={discreet}
       />
       <Conversation
         messages={chat.messages}
         promptsEnabled={pageReady}
         onPrompt={prompt => void chat.send(prompt, savedPages.selectedPages)}
+        discreet={discreet}
       />
       <PageAttachments
         pages={savedPages.pages}
@@ -84,6 +89,7 @@ export default function App() {
           ...(activeTab.content?.links || []),
           ...savedPages.selectedPages.flatMap(page => page.links),
         ])}
+        discreet={discreet}
       />
     </main>
   );
@@ -108,7 +114,7 @@ function LoadingScreen() {
   return (
     <main className="loading-screen">
       <span className="loader" />
-      <p>Preparing your assistant…</p>
+      <p>Loading page context…</p>
     </main>
   );
 }

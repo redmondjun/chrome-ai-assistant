@@ -17,6 +17,7 @@ jest.mock('marked', () => ({
   },
 }));
 import { AnswerDetails } from './AnswerDetails';
+import { ApiKeyOnboarding } from './ApiKeyOnboarding';
 import { Composer } from './Composer';
 import { Conversation } from './Conversation';
 import { EmptyState } from './EmptyState';
@@ -29,6 +30,14 @@ describe('side panel UI', () => {
     render(<EmptyState enabled onPrompt={onPrompt} />);
     fireEvent.click(screen.getByRole('button', { name: /summarize this page/i }));
     expect(onPrompt).toHaveBeenCalledWith('Summarize this page');
+  });
+
+  it('removes marketing copy from the discreet empty state', () => {
+    render(<EmptyState enabled onPrompt={jest.fn()} discreet />);
+
+    expect(screen.queryByText('N')).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: /understand any page/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /summarize this page/i })).toBeInTheDocument();
   });
 
   it('disables the composer and explains when a page is unavailable', () => {
@@ -55,6 +64,37 @@ describe('side panel UI', () => {
     expect(onSend).not.toHaveBeenCalled();
     fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' });
     expect(onSend).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses neutral linked-page and composer copy in discreet mode', () => {
+    render(
+      <Composer
+        value=""
+        onChange={jest.fn()}
+        onSend={jest.fn()}
+        pageReady
+        busy={false}
+        researchSubjectCount={3}
+        discreet
+      />
+    );
+
+    expect(screen.getByText('Include linked pages')).toBeInTheDocument();
+    expect(screen.getByText('3 linked pages available')).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Add a note or request' })).toHaveAttribute(
+      'placeholder',
+      'Add a note or request…'
+    );
+    expect(screen.queryByText('Deep Research')).not.toBeInTheDocument();
+  });
+
+  it('keeps provider details but removes assistant branding from discreet onboarding', () => {
+    render(<ApiKeyOnboarding discreet onSave={jest.fn()} onOpenSettings={jest.fn()} />);
+
+    expect(screen.getByRole('heading', { name: 'Complete setup' })).toBeInTheDocument();
+    expect(screen.getByLabelText('NVIDIA API key')).toBeInTheDocument();
+    expect(screen.queryByText('Connect your AI assistant')).not.toBeInTheDocument();
+    expect(screen.queryByText('N')).not.toBeInTheDocument();
   });
 
   it('only shows answer details when metadata exists', () => {
@@ -235,6 +275,56 @@ describe('side panel UI', () => {
     });
   });
 
+  it('uses neutral progress and activity labels in discreet mode', async () => {
+    jest.mocked(chrome.runtime.sendMessage).mockResolvedValueOnce({ job: researchJobFixture() });
+    render(
+      <MessageItem
+        discreet
+        message={{
+          id: 'research-message',
+          role: 'assistant',
+          content: '',
+          timestamp: Date.now(),
+          isStreaming: true,
+          researchJobId: 'job-1',
+          researchProgress: {
+            jobId: 'job-1',
+            status: 'running',
+            activity: 'Researching architecture...',
+            totalTasks: 400,
+            completedTasks: 12,
+            failedTasks: 0,
+            activeWorkers: 3,
+            sourcesRead: 48,
+            sourcesFailed: 0,
+            updatedAt: Date.now(),
+            activeTaskIds: [],
+            stage: 'seed-scan',
+            currentBatch: 3,
+            totalBatches: 17,
+            seedsScanned: 62,
+            subjectsExpanded: 4,
+          },
+        }}
+      />
+    );
+
+    const progress = screen.getByLabelText('Linked page progress');
+    expect(progress).toHaveTextContent('12/400 pages');
+    expect(progress).toHaveTextContent('3 reviews active');
+    expect(progress).toHaveTextContent('Starting page review · batch 3 of 17');
+    expect(progress).not.toHaveTextContent('Researching');
+    expect(screen.queryByText('Assistant')).not.toBeInTheDocument();
+    expect(screen.queryByText('Generating')).not.toBeInTheDocument();
+    expect(screen.queryByText('Reasoning')).not.toBeInTheDocument();
+
+    const page = await screen.findByText('Architecture source');
+    fireEvent.click(page.closest('summary')!);
+    expect(screen.getByText(/ranking sources/i)).toBeInTheDocument();
+    expect(screen.getByText(/Activity \(1\)/i)).toBeInTheDocument();
+    expect(screen.queryByText(/AI scoring/i)).not.toBeInTheDocument();
+  });
+
   it('closes reasoning after the answer is generated', () => {
     const message = {
       id: '1',
@@ -313,6 +403,53 @@ describe('side panel UI', () => {
     expect(onModelChange).toHaveBeenCalledWith('glm-5.2');
     expect(onOpenSettings).toHaveBeenCalledTimes(1);
     expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows page context and session controls without branding or model names in discreet mode', () => {
+    const onNewConversation = jest.fn();
+    render(
+      <PageHeader
+        discreet
+        page={{
+          url: 'https://wiki.example.com/display/SPACE/Page',
+          title: 'Architecture notes',
+          text: '',
+          links: [],
+          meta: {},
+          timestamp: 1,
+        }}
+        isLoading={false}
+        error=""
+        model="nemotron-3-nano"
+        conversations={[
+          {
+            id: 'chat-1',
+            title: 'New chat',
+            messages: [],
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ]}
+        activeConversationId="chat-1"
+        onConversationChange={jest.fn()}
+        onNewConversation={onNewConversation}
+        conversationBusy={false}
+        onModelChange={jest.fn()}
+        onOpenSettings={jest.fn()}
+        onRetry={jest.fn()}
+      />
+    );
+
+    expect(screen.getByText('Architecture notes')).toBeInTheDocument();
+    expect(screen.getByText('wiki.example.com')).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Untitled session' })).toBeInTheDocument();
+    expect(screen.queryByText('Page Assistant')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('AI model')).not.toBeInTheDocument();
+    expect(screen.queryByText('Nano')).not.toBeInTheDocument();
+    expect(screen.queryByText('New chat')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start new session' }));
+    expect(onNewConversation).toHaveBeenCalledTimes(1);
   });
 });
 

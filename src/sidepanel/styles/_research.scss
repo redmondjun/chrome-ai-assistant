@@ -91,4 +91,17 @@
     white-space: pre-wrap;
     font: inherit;
   }
+
+  :root[data-theme='confluence'] {
+    .research-job,
+    .research-worker,
+    .research-job-actions button {
+      border-radius: 3px;
+    }
+
+    .research-job {
+      border-color: var(--border);
+      background: var(--canvas);
+    }
+  }
 }

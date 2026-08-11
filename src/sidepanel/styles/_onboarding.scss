@@ -108,4 +108,16 @@
   .text-button:hover {
     color: var(--text);
   }
+
+  :root[data-theme='confluence'] {
+    .setup-card,
+    .setup-card input,
+    .primary-button {
+      border-radius: 3px;
+    }
+
+    .setup-card {
+      box-shadow: none;
+    }
+  }
 }
