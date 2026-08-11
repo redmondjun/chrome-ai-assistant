@@ -1,0 +1,178 @@
+@mixin apply {
+  .message {
+    max-width: min(92%, 650px);
+    margin-bottom: 18px;
+  }
+  .message-user {
+    margin-left: auto;
+  }
+  .message-assistant {
+    margin-right: auto;
+  }
+  .message-meta {
+    gap: 6px;
+    margin: 0 0 6px 2px;
+    color: var(--muted);
+    font-size: 11px;
+  }
+  .message-meta strong {
+    color: var(--text);
+    font-size: 11px;
+  }
+  .assistant-mark {
+    width: 20px;
+    height: 20px;
+    border-radius: 6px;
+    font-size: 10px;
+  }
+  .streaming {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--accent);
+    margin-left: 2px;
+  }
+  .streaming i {
+    width: 5px;
+    height: 5px;
+    background: currentColor;
+    border-radius: 50%;
+    animation: pulse 1s infinite;
+  }
+  .stream-progress {
+    margin: 0 0 7px;
+    padding: 9px 11px;
+    border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--border));
+    border-radius: 9px;
+    background: var(--accent-soft);
+    color: var(--text);
+    font-size: 11px;
+  }
+  .stream-progress-row,
+  .stream-progress-meta {
+    display: flex;
+    align-items: center;
+  }
+  .stream-progress-row {
+    gap: 7px;
+  }
+  .stream-progress-row strong {
+    overflow-wrap: anywhere;
+  }
+  .stream-progress-spinner {
+    flex: 0 0 auto;
+    width: 11px;
+    height: 11px;
+    border: 2px solid color-mix(in srgb, var(--accent) 25%, transparent);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  .stream-progress-meta {
+    gap: 12px;
+    margin: 5px 0 0 18px;
+    color: var(--muted);
+  }
+  .stream-progress-warning {
+    margin: 8px 0 0;
+    padding-top: 7px;
+    border-top: 1px solid color-mix(in srgb, var(--warning) 25%, transparent);
+    color: var(--warning);
+    line-height: 1.4;
+  }
+  .stop-button span {
+    display: block;
+    width: 9px;
+    height: 9px;
+    border-radius: 2px;
+    background: currentColor;
+  }
+  .message-body {
+    border: 1px solid var(--border);
+    border-radius: 4px 12px 12px 12px;
+    background: var(--surface);
+    color: var(--text);
+    overflow: hidden;
+  }
+  .message-user .message-body {
+    border: 0;
+    border-radius: 12px 4px 12px 12px;
+    background: var(--accent);
+    color: #fff;
+  }
+  .message-error .message-body {
+    border-color: color-mix(in srgb, var(--danger) 30%, var(--border));
+    background: color-mix(in srgb, var(--danger) 7%, var(--surface));
+    color: var(--danger);
+  }
+  .message-content {
+    padding: 10px 12px;
+    line-height: 1.55;
+    overflow-wrap: anywhere;
+  }
+  .message-content > :first-child {
+    margin-top: 0;
+  }
+  .message-content > :last-child {
+    margin-bottom: 0;
+  }
+  .message-content p,
+  .message-content ul,
+  .message-content ol {
+    margin: 0 0 8px;
+  }
+  .message-content ul,
+  .message-content ol {
+    padding-left: 20px;
+  }
+  .message-content table {
+    width: 100%;
+    margin: 0 0 8px;
+    border: 1px solid var(--border);
+    border-collapse: collapse;
+  }
+  .message-content th,
+  .message-content td {
+    padding: 7px 9px;
+    border: 1px solid var(--border);
+    text-align: left;
+    vertical-align: top;
+  }
+  .message-content th {
+    background: var(--canvas);
+    font-weight: 650;
+  }
+  .message-content pre {
+    overflow: auto;
+    padding: 10px;
+    border-radius: 7px;
+    background: var(--canvas);
+    border: 1px solid var(--border);
+  }
+  .message-content code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.9em;
+  }
+  .message-content a {
+    color: inherit;
+    text-decoration: underline;
+  }
+  .typing {
+    display: flex;
+    gap: 4px;
+    padding: 14px;
+  }
+  .typing i {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--muted);
+    animation: bounce 1.2s infinite;
+  }
+  .typing i:nth-child(2) {
+    animation-delay: 0.15s;
+  }
+  .typing i:nth-child(3) {
+    animation-delay: 0.3s;
+  }
+}

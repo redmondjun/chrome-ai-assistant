@@ -8,7 +8,6 @@ import { useActiveTab } from './hooks/useActiveTab';
 import { useChat } from './hooks/useChat';
 import { useSavedPages } from './hooks/useSavedPages';
 import { useSidepanelSettings } from './hooks/useSidepanelSettings';
-import './styles.css';
 import { isEvidenceLink } from '@/background/research/link-policy';
 import type { LinkInfo } from '@/shared/types';
 

@@ -1,0 +1,28 @@
+@use '../styles/theme';
+@use './styles/answer-details';
+@use './styles/attachments';
+@use './styles/base';
+@use './styles/composer';
+@use './styles/conversation';
+@use './styles/header';
+@use './styles/messages';
+@use './styles/motion';
+@use './styles/onboarding';
+@use './styles/research';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@include theme.apply;
+@include base.apply;
+@include header.apply;
+@include conversation.apply;
+@include messages.apply;
+@include answer-details.apply;
+@include composer.layout;
+@include attachments.apply;
+@include research.apply;
+@include composer.controls;
+@include onboarding.apply;
+@include motion.apply;

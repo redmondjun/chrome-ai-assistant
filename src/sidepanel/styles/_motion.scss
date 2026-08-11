@@ -1,0 +1,51 @@
+@mixin apply {
+  @keyframes pulse {
+    50% {
+      opacity: 0.35;
+    }
+  }
+  @keyframes bounce {
+    0%,
+    60%,
+    100% {
+      transform: translateY(0);
+    }
+    30% {
+      transform: translateY(-3px);
+    }
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @media (max-width: 350px) {
+    .brand span:last-child {
+      display: none;
+    }
+    .conversation {
+      padding-left: 10px;
+      padding-right: 10px;
+    }
+    .page-header {
+      padding-left: 10px;
+      padding-right: 10px;
+    }
+  }
+  @media (min-width: 480px) {
+    .prompt-list {
+      max-width: 420px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+    }
+    .prompt-list button:first-child {
+      grid-column: 1/-1;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * {
+      scroll-behavior: auto !important;
+      animation-duration: 0.01ms !important;
+    }
+  }
+}

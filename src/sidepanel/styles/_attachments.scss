@@ -1,0 +1,97 @@
+@use '../../styles/mixins' as *;
+
+@mixin apply {
+  .page-attachments {
+    position: relative;
+    padding: 0 12px 8px;
+
+    button {
+      @include control;
+      cursor: pointer;
+    }
+
+    > button {
+      padding: 5px 9px;
+      font-size: 12px;
+    }
+
+    &-panel {
+      display: grid;
+      gap: 10px;
+      max-height: 320px;
+      margin-top: 7px;
+      padding: 10px;
+      overflow-y: auto;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface);
+    }
+  }
+
+  .page-url-form {
+    display: flex;
+    gap: 6px;
+
+    input {
+      @include control;
+      min-width: 0;
+      flex: 1;
+      padding: 6px 8px;
+    }
+
+    button {
+      padding: 5px 8px;
+    }
+  }
+
+  .open-tab-list,
+  .saved-page-list {
+    display: grid;
+    gap: 6px;
+  }
+
+  .open-tab-list > button {
+    @include truncate;
+    padding: 6px 8px;
+    text-align: left;
+  }
+
+  .saved-page {
+    display: grid;
+    gap: 4px;
+    padding: 7px;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+
+    label {
+      display: flex;
+      gap: 6px;
+      min-width: 0;
+
+      span {
+        @include truncate;
+      }
+    }
+
+    button {
+      padding: 5px 8px;
+    }
+
+    > div {
+      display: flex;
+      gap: 5px;
+    }
+
+    small {
+      margin: 0;
+      color: var(--muted);
+      font-size: 11px;
+    }
+  }
+
+  .attachment-error {
+    margin: 0;
+    color: var(--danger);
+    font-size: 11px;
+  }
+}
