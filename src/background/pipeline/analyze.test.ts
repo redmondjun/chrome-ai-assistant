@@ -380,16 +380,22 @@ describe('Analysis Pipeline', () => {
         [],
         undefined,
         {
-          jobId: 'research-job',
-          originalQuestion: 'Research all tickets',
-          status: 'failed',
-          completedSubjects: 48,
-          totalSubjects: 418,
-          successfulSources: 1177,
-          failedSources: 213,
-          summary: 'Compact validated findings with source URLs',
-          partial: true,
-          error: '370 research subjects failed',
+          jobs: [
+            {
+              jobId: 'research-job',
+              originalQuestion: 'Research all tickets',
+              status: 'failed',
+              completedSubjects: 48,
+              totalSubjects: 418,
+              successfulSources: 1177,
+              failedSources: 213,
+              summary: 'Compact validated findings with source URLs',
+              partial: true,
+              error: '370 research subjects failed',
+              createdAt: 1,
+            },
+          ],
+          omittedJobs: [],
         }
       );
 
@@ -419,20 +425,26 @@ describe('Analysis Pipeline', () => {
         [],
         undefined,
         {
-          jobId: 'research-job',
-          originalQuestion: 'Research all tickets',
-          status: 'failed',
-          completedSubjects: 48,
-          totalSubjects: 418,
-          successfulSources: 1177,
-          failedSources: 213,
-          summary: 'Partial findings',
-          partial: true,
+          jobs: [
+            {
+              jobId: 'research-job',
+              originalQuestion: 'Research all tickets',
+              status: 'failed',
+              completedSubjects: 48,
+              totalSubjects: 418,
+              successfulSources: 1177,
+              failedSources: 213,
+              summary: 'Partial findings',
+              partial: true,
+              createdAt: 1,
+            },
+          ],
+          omittedJobs: [],
         }
       );
 
       expect(mockCallbacks.onChunk).toHaveBeenCalledWith(
-        '1177 research sources were retrieved successfully and 213 failed or were inaccessible. The research job is failed and has partial findings available.'
+        '1177 research sources were retrieved successfully and 213 failed or were inaccessible. The strongest research job is failed and has partial findings available. 1 persisted research job is available in this conversation.'
       );
       expect(mockRouter.streamComplete).not.toHaveBeenCalled();
     });

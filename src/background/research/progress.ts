@@ -40,7 +40,8 @@ export function deriveResearchProgress(job: ResearchJob) {
   ).length;
   const failed = registry.filter(source => source.status === 'failed').length;
   const sourceBudget = job.sourceBudget || 0;
-  const sourceBudgetOverflow = Math.max(0, registry.length - sourceBudget);
+  const newSources = registry.filter(source => !source.reusedFromJobId).length;
+  const sourceBudgetOverflow = Math.max(0, newSources - sourceBudget);
   job.sourceBudgetOverflow = sourceBudgetOverflow;
   job.progress = {
     ...job.progress,
@@ -60,7 +61,7 @@ export function deriveResearchProgress(job: ResearchJob) {
     uniqueSourcesFailed: failed,
     sourceCacheHits: registry.reduce((total, source) => total + source.cacheHits, 0),
     sourceRetries: registry.reduce((total, source) => total + source.retries, 0),
-    sourceBudgetUsed: Math.min(registry.length, sourceBudget),
+    sourceBudgetUsed: Math.min(newSources, sourceBudget),
     sourceBudgetTotal: sourceBudget,
     sourceBudgetOverflow,
     sourcesRead: succeeded,

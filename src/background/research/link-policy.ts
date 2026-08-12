@@ -1,4 +1,9 @@
-import type { LinkInfo, ResearchEvidence, ResearchTask } from '@/shared/types';
+import type {
+  LinkInfo,
+  ResearchEvidence,
+  ResearchSubjectSelection,
+  ResearchTask,
+} from '@/shared/types';
 import { evaluateLinkSafety } from '@/shared/link-safety';
 
 export function extractResearchTasks(links: LinkInfo[]): ResearchTask[] {
@@ -31,6 +36,28 @@ export function extractResearchTasks(links: LinkInfo[]): ResearchTask[] {
     });
   });
   return [...tasks.values()];
+}
+
+export function extractSelectedResearchTasks(
+  links: LinkInfo[],
+  selection: ResearchSubjectSelection
+): ResearchTask[] {
+  const excluded = new Set(selection.excludedTicketIds.map(id => id.toUpperCase()));
+  const selectedLinks: LinkInfo[] = [];
+  const selectedIds = new Set<string>();
+  links.forEach(link => {
+    const ticketId = extractTicketId(link);
+    if (!ticketId || excluded.has(ticketId) || selectedIds.has(ticketId)) return;
+    if (!isEvidenceLink(link)) return;
+    selectedIds.add(ticketId);
+    selectedLinks.push({ ...link, text: ticketId });
+  });
+  return extractResearchTasks(selectedLinks.slice(0, selection.requestedCount));
+}
+
+export function extractTicketId(link: LinkInfo): string | undefined {
+  const match = `${link.text} ${link.url}`.match(/\b([A-Z][A-Z0-9]+-\d+)\b/i);
+  return match?.[1].toUpperCase();
 }
 
 export function isEvidenceLink(link: LinkInfo) {

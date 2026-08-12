@@ -15,6 +15,16 @@ describe('hierarchical research synthesis', () => {
       ),
     };
     const job = createSynthesisJob(25, 6000);
+    job.contextPages = [
+      {
+        id: 'promotion-plan',
+        url: 'https://wiki.example.com/promotion-plan',
+        title: 'Promotion Plan',
+        text: 'Qualification | Accomplishments Summary | Supporting Documentation',
+        links: [],
+        capturedAt: 1,
+      },
+    ];
     const levels: number[] = [];
 
     const answer = await synthesizeResearch(
@@ -31,6 +41,12 @@ describe('hierarchical research synthesis', () => {
     expect(contentLengths.slice(0, -1).every(length => length <= 20000)).toBe(true);
     expect(levels.length).toBeGreaterThanOrEqual(2);
     expect(prompts.at(-1)).toContain('Do not recommend exporting to Word, PDF, or another format');
+    expect(prompts.at(-1)).toContain(
+      'Qualification | Accomplishments Summary | Supporting Documentation'
+    );
+    expect(prompts.at(-1)).toContain(
+      "reproduce that page's headings, table columns, and row structure"
+    );
   });
 
   it('appends explicit saved-page and failed-source warnings', async () => {

@@ -8,6 +8,7 @@ import {
 import { getResearchJob, getResumableResearchJobs } from './storage';
 import type {
   ResearchProgress,
+  ResearchSubjectSelection,
   ResearchTask,
   SavedPage,
   StorageSettings,
@@ -31,8 +32,24 @@ export class ResearchCoordinator {
     private readonly getSettings: () => Promise<StorageSettings>
   ) {}
 
-  async start(content: TabContent, contextPages: SavedPage[], question: string, messageId: string) {
-    const job = await createResearchJob(content, contextPages, question, messageId);
+  async start(
+    content: TabContent,
+    contextPages: SavedPage[],
+    question: string,
+    messageId: string,
+    conversationBrief?: string,
+    priorResearchJobIds?: string[],
+    subjectSelection?: ResearchSubjectSelection
+  ) {
+    const job = await createResearchJob(
+      content,
+      contextPages,
+      question,
+      messageId,
+      conversationBrief,
+      priorResearchJobIds,
+      subjectSelection
+    );
     await this.launch(job.id);
     return job;
   }

@@ -12,7 +12,7 @@ jest.mock('./storage', () => ({
 import { ModelRouter } from '../api/router';
 import { DEFAULT_SETTINGS } from '../storage/settings';
 import { ResearchCoordinator } from './coordinator';
-import { runResearchJob, setResearchJobStatus } from './engine';
+import { createResearchJob, runResearchJob, setResearchJobStatus } from './engine';
 import { getResearchJob, getResumableResearchJobs } from './storage';
 import type { ResearchJob } from '@/shared/types';
 
@@ -60,6 +60,37 @@ describe('ResearchCoordinator resume', () => {
 
     expect(runResearchJob).toHaveBeenCalledTimes(2);
     secondRun.resolve();
+  });
+
+  it('stores conversation memory and prior job IDs when research starts', async () => {
+    const job = createJob();
+    jest.mocked(createResearchJob).mockResolvedValue(job);
+    jest.mocked(getResearchJob).mockResolvedValue(job);
+    jest.mocked(runResearchJob).mockResolvedValue(undefined);
+    const coordinator = new ResearchCoordinator(
+      async () => new ModelRouter(DEFAULT_SETTINGS.model),
+      async () => DEFAULT_SETTINGS
+    );
+
+    await coordinator.start(
+      { url: 'https://example.com', title: 'Page', text: 'Content', links: [], timestamp: 1 },
+      [],
+      'Continue the research',
+      'message',
+      'Original request and later corrections',
+      ['prior-job'],
+      undefined
+    );
+
+    expect(createResearchJob).toHaveBeenCalledWith(
+      expect.anything(),
+      [],
+      'Continue the research',
+      'message',
+      'Original request and later corrections',
+      ['prior-job'],
+      undefined
+    );
   });
 });
 

@@ -4,8 +4,8 @@ jest.mock('./storage', () => ({
 }));
 jest.mock('../content/link-tab-fetcher', () => ({ fetchLinkContentInTab: jest.fn() }));
 
-import { retryFailedResearchTasks, runResearchJob } from './engine';
-import { extractResearchTasks, isEvidenceLink } from './link-policy';
+import { createResearchJob, retryFailedResearchTasks, runResearchJob } from './engine';
+import { extractResearchTasks, extractSelectedResearchTasks, isEvidenceLink } from './link-policy';
 import { fetchLinkContentInTab } from '../content/link-tab-fetcher';
 import { getResearchJob, saveResearchJob } from './storage';
 import type { LinkInfo, ResearchJob, ResearchTask, StorageSettings } from '@/shared/types';
@@ -94,6 +94,84 @@ describe('Deep Research subject discovery', () => {
     ]);
 
     expect(tasks).toEqual([]);
+  });
+
+  it('scans past excluded tickets until it selects 100 new tickets in source order', () => {
+    const links = Array.from({ length: 105 }, (_, index) => ({
+      url: `https://jira.example.com/browse/SQ-${index + 1}`,
+      text: `SQ-${index + 1}`,
+      isExternal: true,
+    }));
+
+    const tasks = extractSelectedResearchTasks(links, {
+      kind: 'ticket',
+      sourceUrl: 'https://wiki.example.com/tracker',
+      requestedCount: 100,
+      excludedTicketIds: ['SQ-1', 'SQ-2', 'SQ-3', 'SQ-4', 'SQ-5'],
+    });
+
+    expect(tasks).toHaveLength(100);
+    expect(tasks[0].label).toBe('SQ-6');
+    expect(tasks.at(-1)?.label).toBe('SQ-105');
+  });
+
+  it('rejects a directed run when the source cannot provide the requested count', async () => {
+    jest.mocked(saveResearchJob).mockClear();
+    await expect(
+      createResearchJob(
+        {
+          url: 'https://wiki.example.com/tracker',
+          title: 'Tracker',
+          text: 'Only one ticket',
+          links: [
+            {
+              url: 'https://jira.example.com/browse/SQ-1',
+              text: 'SQ-1',
+              isExternal: true,
+            },
+          ],
+          meta: {},
+          timestamp: 1,
+        },
+        [],
+        'first 100 tickets',
+        'message',
+        undefined,
+        undefined,
+        {
+          kind: 'ticket',
+          sourceUrl: 'https://wiki.example.com/tracker',
+          requestedCount: 100,
+          excludedTicketIds: [],
+        }
+      )
+    ).rejects.toThrow('contains 1 eligible new tickets after exclusions; 100 were requested');
+    expect(saveResearchJob).not.toHaveBeenCalled();
+  });
+
+  it('selects the budget-safe batched pipeline for a 35-subject job', async () => {
+    const links = Array.from({ length: 35 }, (_, index) => ({
+      url: `https://jira.example.com/browse/SQ-${index + 1}`,
+      text: `SQ-${index + 1}`,
+      isExternal: true,
+    }));
+
+    const job = await createResearchJob(
+      {
+        url: 'https://wiki.example.com/tracker',
+        title: 'Tracker',
+        text: 'Tickets',
+        links,
+        meta: {},
+        timestamp: 1,
+      },
+      [],
+      'Research tickets',
+      'message'
+    );
+
+    expect(job.tasks).toHaveLength(35);
+    expect(job.useBatchedPipeline).toBe(true);
   });
 });
 

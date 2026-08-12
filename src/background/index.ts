@@ -19,7 +19,9 @@ import { analyzeWithReasoning, AnalysisCallbacks } from './pipeline/analyze';
 import { getTabContent } from './content/tab-content';
 import { fetchLinkContentInTab } from './content/link-tab-fetcher';
 import { ResearchCoordinator, RESEARCH_RESUME_ALARM } from './research/coordinator';
-import { buildResearchConversationContext } from './research/context';
+import { buildConversationResearchContext } from './research/context';
+import { buildConversationBrief, getPriorResearchJobIds } from './conversation-memory';
+import { resolveDirectedResearchRequest } from './research/directed-request';
 import type { BackgroundMessage, ChatMessage, SavedPage, TabContent } from '@/shared/types';
 
 let router: ModelRouter | null = null;
@@ -212,11 +214,20 @@ chrome.runtime.onMessage.addListener((message: BackgroundMessage, sender, sendRe
             if (!tabId) throw new Error('No tab ID');
             content = await getTabContent(tabId);
           }
-          const job = await researchCoordinator.start(
+          const researchRequest = await resolveDirectedResearchRequest(
             content,
             message.contextPages || [],
             message.question,
-            message.messageId
+            fetchRequestPage
+          );
+          const job = await researchCoordinator.start(
+            researchRequest.content,
+            researchRequest.contextPages,
+            message.question,
+            message.messageId,
+            buildConversationBrief(message.history || [], message.question),
+            getPriorResearchJobIds(message.history || []),
+            researchRequest.subjectSelection
           );
           sendResponse({ ok: true, jobId: job.id, progress: job.progress });
           break;
@@ -389,16 +400,33 @@ function mergeContextPages(primary: TabContent, pages: SavedPage[]): TabContent 
   };
 }
 
+async function fetchRequestPage(url: string): Promise<TabContent> {
+  const result = await fetchLinkContentInTab(url);
+  if (!result.content || !result.finalUrl) {
+    throw new Error(result.error || `Could not read the requested research page: ${url}`);
+  }
+  return {
+    url: result.finalUrl,
+    title: result.title || result.finalUrl,
+    text: result.content,
+    links: result.links || [],
+    meta: {},
+    timestamp: Date.now(),
+  };
+}
+
 function required(value: string | undefined, name: string): string {
   if (!value) throw new Error(`Missing ${name}`);
   return value;
 }
 
 async function getConversationResearchContext(history: ChatMessage[] = []) {
-  const jobId = [...history].reverse().find(message => message.researchJobId)?.researchJobId;
-  if (!jobId) return undefined;
-  const job = await researchCoordinator.getJob(jobId);
-  return job ? buildResearchConversationContext(job) : undefined;
+  const jobIds = getPriorResearchJobIds(history);
+  if (jobIds.length === 0) return undefined;
+  const jobs = (await Promise.all(jobIds.map(jobId => researchCoordinator.getJob(jobId)))).filter(
+    job => job !== undefined
+  );
+  return buildConversationResearchContext(jobs);
 }
 
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });

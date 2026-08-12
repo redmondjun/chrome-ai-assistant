@@ -2,6 +2,7 @@ import { ModelRouter } from '../api/router';
 import { shouldFollowLinks as modelShouldFollowLinks } from '../content/classifier';
 import { fetchLinkContentInTab } from '../content/link-tab-fetcher';
 import { validateRetrievedPage } from '../content/retrieved-page';
+import { buildConversationBrief } from '../conversation-memory';
 import { evaluateLinkSafety } from '@/shared/link-safety';
 import type {
   TabContent,
@@ -426,7 +427,7 @@ export async function analyzeWithReasoning(
       contentLength:
         context.length +
         history.reduce((length, message) => length + message.content.length, 0) +
-        (researchContext?.summary.length || 0),
+        (researchContext?.jobs.reduce((length, job) => length + job.summary.length, 0) || 0),
     },
     prompt,
     { temperature: 0.7, maxTokens: 4096, signal }
@@ -799,19 +800,12 @@ function buildPrompt(
   currentVisits: LinkVisit[],
   researchContext?: ResearchConversationContext
 ): string {
-  const conversation = history
-    .filter(message => !message.isStreaming && message.content)
-    .slice(-12)
-    .map(
-      message =>
-        `${message.role === 'user' ? 'User' : 'Assistant'}: ${message.content.slice(0, 4000)}`
-    )
-    .join('\n\n');
+  const conversation = buildConversationBrief(history, question);
   const sourceStatus = formatSourceStatus(
     currentVisits.length > 0 ? currentVisits : getLatestVisits(history)
   );
   const persistedResearch = researchContext
-    ? `Persisted Deep Research results:
+    ? `Persisted Deep Research results, strongest and newest first:
 ${formatResearchContext(researchContext)}
 
 `
@@ -822,28 +816,38 @@ ${formatResearchContext(researchContext)}
 Content:
 ${context.slice(0, 50000)}
 
-${sourceStatus ? `Source retrieval results:\n${sourceStatus}\n\n` : ''}${persistedResearch}${conversation ? `Conversation so far:\n${conversation}\n\n` : ''}Current question: ${question}
+${sourceStatus ? `Source retrieval results:\n${sourceStatus}\n\n` : ''}${persistedResearch}Conversation memory:\n${conversation}
 
 Answer the current question directly. The current question has priority over previous requests and answers. Do not repeat or regenerate a previous summary unless the current question explicitly requests it. Do not recommend exporting to Word, PDF, or another format unless the current question explicitly requests an export. Use the source retrieval and persisted research results as the truth about which links were visited. A failed research job may still contain valid partial findings; do not claim that nothing was read when its successful-source count is greater than zero. Cite successfully retrieved sources when possible.`;
 }
 
 function formatResearchContext(context: ResearchConversationContext): string {
-  return `Research job: ${context.jobId}
-Status: ${context.status}${context.partial ? ' (partial findings available)' : ''}
-Original request: ${context.originalQuestion}
-Completed subjects: ${context.completedSubjects}/${context.totalSubjects}
-Validated readable sources: ${context.successfulSources}
-Failed or inaccessible sources: ${context.failedSources}
-${context.error ? `Research error: ${context.error}\n` : ''}Compact findings:
-${context.summary}`;
+  const included = context.jobs.map(
+    job => `Research job: ${job.jobId}
+Status: ${job.status}${job.partial ? ' (partial findings available)' : ''}
+Original request: ${job.originalQuestion}
+Completed subjects: ${job.completedSubjects}/${job.totalSubjects}
+Validated readable sources: ${job.successfulSources}
+Failed or inaccessible sources: ${job.failedSources}
+${job.error ? `Research error: ${job.error}\n` : ''}Compact findings:
+${job.summary}`
+  );
+  const omitted = context.omittedJobs.map(
+    job =>
+      `Research job ${job.jobId}: ${job.status}, ${job.completedSubjects}/${job.totalSubjects} subjects, ${job.successfulSources} readable sources, findings omitted only for prompt size.`
+  );
+  return [...included, ...omitted].join('\n\n---\n\n');
 }
 
 function buildResearchVisitStatus(context: ResearchConversationContext): string {
+  const strongest = context.jobs[0];
+  if (!strongest) return 'No persisted research findings are available.';
+  const jobCount = context.jobs.length + context.omittedJobs.length;
   const completion =
-    context.failedSources === 0
-      ? `All ${context.successfulSources} recorded research sources were retrieved successfully.`
-      : `${context.successfulSources} research sources were retrieved successfully and ${context.failedSources} failed or were inaccessible.`;
-  return `${completion} The research job is ${context.status}${context.partial ? ' and has partial findings available' : ''}.`;
+    strongest.failedSources === 0
+      ? `All ${strongest.successfulSources} recorded research sources were retrieved successfully.`
+      : `${strongest.successfulSources} research sources were retrieved successfully and ${strongest.failedSources} failed or were inaccessible.`;
+  return `${completion} The strongest research job is ${strongest.status}${strongest.partial ? ' and has partial findings available' : ''}. ${jobCount} persisted research job${jobCount === 1 ? '' : 's'} ${jobCount === 1 ? 'is' : 'are'} available in this conversation.`;
 }
 
 function explicitlyRequestsLinkRetrieval(question: string): boolean {

@@ -61,7 +61,7 @@ export async function fetchLinkContentInTab(
     }
 
     return {
-      content: text.slice(0, 15000),
+      content: text.slice(0, 50000),
       links: content.links,
       finalUrl: content.url,
       title: content.title,
@@ -90,7 +90,9 @@ async function waitForReadableContent(tabId: number, signal?: AbortSignal): Prom
   let stableReads = 0;
 
   while (Date.now() < deadline) {
-    const fingerprint = `${latest.url}\n${latest.title}\n${latest.text.trim()}`;
+    const fingerprint = `${latest.url}\n${latest.title}\n${latest.text.trim()}\n${latest.links
+      .map(link => link.url)
+      .join('\n')}`;
     stableReads = fingerprint === previousFingerprint ? stableReads + 1 : 0;
     if (
       Date.now() >= minimumReadyAt &&

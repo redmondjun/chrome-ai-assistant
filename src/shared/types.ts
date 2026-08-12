@@ -145,6 +145,7 @@ export interface ResearchSourceRecord {
   failureReason?: SourceFailureReason;
   retries: number;
   cacheHits: number;
+  reusedFromJobId?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -234,6 +235,10 @@ export interface ResearchJob {
   id: string;
   messageId: string;
   question: string;
+  conversationBrief?: string;
+  priorResearchJobIds?: string[];
+  subjectSelection?: ResearchSubjectSelection;
+  useBatchedPipeline?: boolean;
   contextPages?: SavedPage[];
   contextWarnings?: string[];
   modelRequestsUsed?: number;
@@ -257,7 +262,19 @@ export interface ResearchJob {
   updatedAt: number;
 }
 
+export interface ResearchSubjectSelection {
+  kind: 'ticket';
+  sourceUrl: string;
+  requestedCount: number;
+  excludedTicketIds: string[];
+}
+
 export interface ResearchConversationContext {
+  jobs: ResearchJobConversationContext[];
+  omittedJobs: ResearchJobConversationMetadata[];
+}
+
+export interface ResearchJobConversationMetadata {
   jobId: string;
   originalQuestion: string;
   status: ResearchJobStatus;
@@ -265,8 +282,12 @@ export interface ResearchConversationContext {
   totalSubjects: number;
   successfulSources: number;
   failedSources: number;
-  summary: string;
   partial: boolean;
+  createdAt: number;
+}
+
+export interface ResearchJobConversationContext extends ResearchJobConversationMetadata {
+  summary: string;
   error?: string;
 }
 

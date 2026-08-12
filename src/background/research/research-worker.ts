@@ -1,6 +1,6 @@
 import type { ModelRouter } from '../api/router';
 import { classifyLinks } from '../pipeline/analyze';
-import { canonicalizeUrl, isEvidenceLink } from './link-policy';
+import { canonicalizeUrl, categorizeSource, isEvidenceLink } from './link-policy';
 import type {
   LinkInfo,
   ResearchEvidence,
@@ -60,7 +60,7 @@ export async function scanResearchSeed(options: WorkerOptions) {
 }
 
 export async function scanResearchSeedWithoutModel(options: WorkerOptions) {
-  const { task, retrieveSource, checkpoint } = options;
+  const { task, retrieveSource, checkpoint, settings } = options;
   const source = { url: task.sourceUrl, title: task.title, depth: 0 };
   task.seedStatus = 'running';
   task.status = 'running';
@@ -70,13 +70,17 @@ export async function scanResearchSeedWithoutModel(options: WorkerOptions) {
     task.seedStatus = 'failed';
     throw new Error(result.error || `No readable seed evidence was collected for ${task.label}.`);
   }
-  task.pendingSources = [];
+  task.pendingSources = selectSupportingSources(
+    task,
+    result.links,
+    settings.research.maxRelatedSourcesPerTask
+  );
   task.seedAssessment = {
     summary: result.evidence.excerpt.slice(0, 1200),
     relevance: 1,
     themes: [],
     evidenceGaps: [],
-    expansionNeeded: false,
+    expansionNeeded: task.pendingSources.length > 0,
   };
   task.seedStatus = 'completed';
   task.expansionStatus = 'skipped';
@@ -85,18 +89,75 @@ export async function scanResearchSeedWithoutModel(options: WorkerOptions) {
   await checkpoint(task, `${task.label}: seed evidence saved for batched analysis`);
 }
 
-export async function finalizeResearchSubjectWithoutModel(options: WorkerOptions) {
-  const { task, getEvidence, checkpoint } = options;
+export async function finalizeResearchSubjectWithoutModel(
+  options: WorkerOptions,
+  expansionItems: ResearchExpansionItem[]
+) {
+  const { task, getEvidence, checkpoint, retrieveSource, signal } = options;
+  task.status = 'running';
+  task.expansionStatus = expansionItems.length > 0 ? 'running' : 'skipped';
+  for (const item of expansionItems) {
+    throwIfAborted(signal);
+    task.relatedSourcesAttempted++;
+    const result = await retrieveAndRecord(task, item.source, retrieveSource);
+    if (result.evidence) {
+      task.relatedSourcesRead++;
+      item.status = 'completed';
+    } else {
+      item.status = result.budgetExceeded ? 'skipped' : 'failed';
+      item.reason = result.error;
+    }
+    await checkpoint(task);
+  }
   const evidence = getEvidence(task);
   if (evidence.length === 0)
     throw new Error(`No readable evidence was collected for ${task.label}.`);
   task.report = evidence
-    .map(item => `${item.title}\nSOURCE: ${item.url}\n${item.excerpt.slice(0, 1200)}`)
+    .map(item => `${item.title}\nSOURCE: ${item.url}\n${compactEvidence(item.excerpt)}`)
     .join('\n\n');
-  task.expansionStatus = 'skipped';
+  task.expansionStatus = expansionItems.length > 0 ? 'completed' : 'skipped';
   task.status = 'completed';
   setPhase(task, 'completed');
   await checkpoint(task, `${task.label}: evidence prepared for batched analysis`);
+}
+
+function selectSupportingSources(
+  task: ResearchTask,
+  links: LinkInfo[],
+  limit: number
+): ResearchTask['pendingSources'] {
+  return links
+    .filter(
+      link => isEvidenceLink(link) && canonicalizeUrl(link.url) !== canonicalizeUrl(task.sourceUrl)
+    )
+    .map(link => ({
+      url: link.url,
+      title: link.text || link.url,
+      depth: 1,
+      score: supportingSourceScore(link),
+    }))
+    .filter(source => source.score > 0)
+    .sort((left, right) => right.score - left.score)
+    .filter(
+      (source, index, all) =>
+        all.findIndex(
+          candidate => canonicalizeUrl(candidate.url) === canonicalizeUrl(source.url)
+        ) === index
+    )
+    .slice(0, limit);
+}
+
+function supportingSourceScore(link: LinkInfo): number {
+  const category = categorizeSource(link.url, link.text);
+  if (category === 'code-review') return 1;
+  if (category === 'documentation') return 0.9;
+  if (category === 'business' || category === 'epic') return 0.8;
+  return 0;
+}
+
+function compactEvidence(excerpt: string): string {
+  if (excerpt.length <= 2400) return excerpt;
+  return `${excerpt.slice(0, 1200)}\n\n[...middle omitted...]\n\n${excerpt.slice(-1200)}`;
 }
 
 export async function finalizeResearchSubject(

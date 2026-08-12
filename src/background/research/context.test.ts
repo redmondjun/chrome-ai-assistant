@@ -1,5 +1,9 @@
-import { buildResearchConversationContext, createPartialResearchAnswer } from './context';
-import type { ResearchJob, ResearchTask } from '@/shared/types';
+import {
+  buildConversationResearchContext,
+  buildResearchConversationContext,
+  createPartialResearchAnswer,
+} from './context';
+import type { ResearchJob, ResearchSourceRecord, ResearchTask } from '@/shared/types';
 
 describe('persisted research context', () => {
   it('builds compact partial findings with trustworthy source outcomes', () => {
@@ -12,7 +16,8 @@ describe('persisted research context', () => {
     expect(partial).toContain('Completed subjects: 1/2');
     expect(partial).toContain('Validated readable sources: 1');
     expect(partial).toContain('Failed or inaccessible sources: 1');
-    expect(partial).toContain('Validated impact report');
+    expect(partial).not.toContain('Validated impact report');
+    expect(context?.summary).toContain('Validated impact report');
     expect(context).toEqual(
       expect.objectContaining({
         status: 'failed',
@@ -23,6 +28,41 @@ describe('persisted research context', () => {
         partial: true,
       })
     );
+  });
+
+  it('keeps the strongest older corpus ahead of a weaker newest job', () => {
+    const strongest = createJob();
+    strongest.id = '403-source-job';
+    strongest.createdAt = 1;
+    strongest.sourceRegistry = Array.from<ResearchSourceRecord>({ length: 403 }, (_, index) => ({
+      key: `source-${index}`,
+      url: `https://example.com/${index}`,
+      title: `Source ${index}`,
+      status: 'success',
+      taskIds: [],
+      evidence: {
+        url: `https://example.com/${index}`,
+        title: `Source ${index}`,
+        category: 'other',
+        excerpt: 'Evidence',
+        depth: 0,
+      },
+      retries: 0,
+      cacheHits: 0,
+      createdAt: 1,
+      updatedAt: 1,
+    }));
+    strongest.partialAnswer = 'Strong corpus';
+    const newest = createJob();
+    newest.id = '37-source-job';
+    newest.createdAt = 2;
+    newest.sourceRegistry = newest.sourceRegistry?.slice(0, 1);
+    newest.partialAnswer = 'Newest findings';
+
+    const context = buildConversationResearchContext([strongest, newest]);
+
+    expect(context?.jobs.map(job => job.jobId)).toEqual(['403-source-job', '37-source-job']);
+    expect(context?.jobs[0].successfulSources).toBe(403);
   });
 });
 

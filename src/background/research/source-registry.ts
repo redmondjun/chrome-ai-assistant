@@ -11,7 +11,7 @@ import type {
   SourceFailureReason,
 } from '@/shared/types';
 
-const SOURCE_EXCERPT_LIMIT = 6000;
+const SOURCE_EXCERPT_LIMIT = 12000;
 const MAX_SOURCE_RETRIES = 1;
 
 export interface ResearchSourceInput {
@@ -35,10 +35,12 @@ interface SourceRegistryOptions {
   budget: number;
   signal: AbortSignal;
   checkpoint: (task?: ResearchTask, activity?: string) => Promise<void>;
+  reusableSources?: Array<{ source: ResearchSourceRecord; jobId: string }>;
 }
 
 export function createSourceRegistry(options: SourceRegistryOptions) {
-  const { job, budget, signal, checkpoint } = options;
+  const { job, budget, signal, checkpoint, reusableSources = [] } = options;
+  const reusableByKey = new Map(reusableSources.map(item => [item.source.key, item]));
   const activeFetches = new Map<string, Promise<RetrievedResearchSource>>();
 
   return async (task: ResearchTask, source: ResearchSourceInput) => {
@@ -50,6 +52,33 @@ export function createSourceRegistry(options: SourceRegistryOptions) {
     const key = canonicalizeUrl(source.url);
     let record = job.sourceRegistry?.find(item => item.key === key);
     if (record) addTaskOwner(record, task.id);
+
+    if (!record) {
+      const reusable = reusableByKey.get(key);
+      const reusableEvidence = reusable?.source.evidence;
+      if (reusable && reusableEvidence) {
+        const now = Date.now();
+        record = {
+          ...reusable.source,
+          taskIds: [task.id],
+          evidence: { ...reusableEvidence },
+          retries: 0,
+          cacheHits: 1,
+          reusedFromJobId: reusable.jobId,
+          createdAt: now,
+          updatedAt: now,
+        };
+        job.sourceRegistry ||= [];
+        job.sourceRegistry.push(record);
+        addTaskSource(task, key);
+        await checkpoint(task, `${task.label}: reused ${record.title} from prior research`);
+        return {
+          evidence: withDepth(reusableEvidence, source.depth),
+          links: [],
+          cacheHit: true,
+        };
+      }
+    }
 
     if (record?.status === 'success' && record.evidence) {
       addTaskSource(task, key);
@@ -95,7 +124,7 @@ export function createSourceRegistry(options: SourceRegistryOptions) {
     }
 
     if (!record) {
-      if ((job.sourceRegistry?.length || 0) >= budget) {
+      if (countNewSources(job.sourceRegistry || []) >= budget) {
         return {
           ...resultError('Global source budget exhausted.', 'source-budget-exhausted'),
           budgetExceeded: true,
@@ -129,6 +158,10 @@ export function createSourceRegistry(options: SourceRegistryOptions) {
       activeFetches.delete(key);
     }
   };
+}
+
+function countNewSources(sources: ResearchSourceRecord[]): number {
+  return sources.filter(source => !source.reusedFromJobId).length;
 }
 
 async function fetchAndRecord(
@@ -171,7 +204,7 @@ async function fetchAndRecord(
     url: fetched.finalUrl || source.url,
     title: fetched.title || source.title || source.url,
     category: categorizeSource(source.url, fetched.title || source.title || ''),
-    excerpt: fetched.content.slice(0, SOURCE_EXCERPT_LIMIT),
+    excerpt: createResearchExcerpt(fetched.content),
     depth: source.depth,
   };
   record.status = 'success';
@@ -181,6 +214,12 @@ async function fetchAndRecord(
   record.updatedAt = Date.now();
   await checkpoint(task, `${task.label}: read ${evidence.title}`);
   return { evidence, links: fetched.links || [], cacheHit: false };
+}
+
+function createResearchExcerpt(content: string): string {
+  if (content.length <= SOURCE_EXCERPT_LIMIT) return content;
+  const half = SOURCE_EXCERPT_LIMIT / 2;
+  return `${content.slice(0, half)}\n\n[...middle omitted...]\n\n${content.slice(-half)}`;
 }
 
 function addTaskOwner(record: ResearchSourceRecord, taskId: string) {

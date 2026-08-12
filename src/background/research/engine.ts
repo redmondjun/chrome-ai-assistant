@@ -1,6 +1,11 @@
 import type { ModelRouter } from '../api/router';
 import { classifyLinks } from '../pipeline/analyze';
-import { canonicalizeUrl, extractResearchTasks, isEvidenceLink } from './link-policy';
+import {
+  canonicalizeUrl,
+  extractResearchTasks,
+  extractSelectedResearchTasks,
+  isEvidenceLink,
+} from './link-policy';
 import { buildExpansionPlan } from './expansion-plan';
 import { createResearchCheckpoint, setResearchStage, type ResearchCheckpoint } from './progress';
 import { createSourceRegistry } from './source-registry';
@@ -18,6 +23,7 @@ import type {
   ResearchEvidence,
   ResearchJob,
   ResearchProgress,
+  ResearchSubjectSelection,
   SavedPage,
   ResearchTask,
   StorageSettings,
@@ -25,7 +31,7 @@ import type {
 } from '@/shared/types';
 
 type ResearchRouter = Pick<ModelRouter, 'complete'>;
-const LARGE_RESEARCH_THRESHOLD = 40;
+const SYNTHESIS_MODEL_REQUEST_RESERVE = 4;
 
 export interface ResearchCallbacks {
   onProgress: (progress: ResearchProgress) => void;
@@ -38,21 +44,33 @@ export async function createResearchJob(
   content: TabContent,
   contextPages: SavedPage[],
   question: string,
-  messageId: string
+  messageId: string,
+  conversationBrief?: string,
+  priorResearchJobIds?: string[],
+  subjectSelection?: ResearchSubjectSelection
 ): Promise<ResearchJob> {
-  const tasks = extractResearchTasks(content.links);
-  contextPages.forEach(page => {
-    extractResearchTasks(page.links).forEach(task => {
-      if (
-        tasks.some(
-          existing => canonicalizeUrl(existing.sourceUrl) === canonicalizeUrl(task.sourceUrl)
+  const tasks = subjectSelection
+    ? extractSelectedResearchTasks(content.links, subjectSelection)
+    : extractResearchTasks(content.links);
+  if (!subjectSelection) {
+    contextPages.forEach(page => {
+      extractResearchTasks(page.links).forEach(task => {
+        if (
+          tasks.some(
+            existing => canonicalizeUrl(existing.sourceUrl) === canonicalizeUrl(task.sourceUrl)
+          )
         )
-      )
-        return;
-      task.originPageId = page.id;
-      tasks.push(task);
+          return;
+        task.originPageId = page.id;
+        tasks.push(task);
+      });
     });
-  });
+  }
+  if (subjectSelection && tasks.length < subjectSelection.requestedCount) {
+    throw new Error(
+      `The ticket tracking page contains ${tasks.length} eligible new tickets after exclusions; ${subjectSelection.requestedCount} were requested.`
+    );
+  }
   if (tasks.length === 0) {
     throw new Error(
       'Deep Research could not find researchable links in the readable page content.'
@@ -96,12 +114,16 @@ export async function createResearchJob(
     id,
     messageId,
     question,
+    conversationBrief,
+    priorResearchJobIds,
+    subjectSelection,
     contextPages,
     contextWarnings: contextPages.flatMap(page =>
       page.refreshWarning ? [`${page.title}: ${page.refreshWarning}`] : []
     ),
     modelRequestsUsed: 0,
     modelRequestBudget: 24,
+    useBatchedPipeline: requiresBatchedPipeline(tasks.length, 24),
     status: 'queued',
     stage: 'seed-scan',
     currentBatch: 0,
@@ -129,6 +151,9 @@ export async function runResearchJob(
   if (!job || job.status === 'cancelled' || job.status === 'completed') return;
 
   prepareJob(job, settings);
+  const priorJobs = await Promise.all(
+    (job.priorResearchJobIds || []).map(priorJobId => getResearchJob(priorJobId))
+  );
   const budgetedRouter = createBudgetedRouter(job, router);
   const checkpoint = createResearchCheckpoint(job, callbacks);
   const retrieveSource = createSourceRegistry({
@@ -136,6 +161,13 @@ export async function runResearchJob(
     budget: job.sourceBudget || settings.research.maxUniqueSourcesPerJob,
     signal,
     checkpoint,
+    reusableSources: priorJobs
+      .filter(priorJob => priorJob !== undefined)
+      .flatMap(priorJob =>
+        (priorJob.sourceRegistry || [])
+          .filter(source => source.status === 'success' && source.evidence)
+          .map(source => ({ source, jobId: priorJob.id }))
+      ),
   });
   const getEvidence = (task: ResearchTask) =>
     (task.sourceKeys || [])
@@ -256,10 +288,10 @@ async function runSeedStage(options: StageOptions) {
     job.currentBatch = index + 1;
     assignBatch(batches[index], index);
     await checkpoint(undefined, `Seed scan · batch ${index + 1} of ${batches.length}`);
-    const largeJob = tasks.length >= LARGE_RESEARCH_THRESHOLD;
+    const largeJob = usesBatchedPipeline(job, tasks.length);
     await runWorkerPool(pending, settings.research.workerConcurrency, async task => {
       try {
-        const workerOptions = { ...options, task, question: job.question };
+        const workerOptions = { ...options, task, question: researchRequest(job) };
         if (largeJob) await scanResearchSeedWithoutModel(workerOptions);
         else await scanResearchSeed(workerOptions);
       } catch (error) {
@@ -277,7 +309,7 @@ async function runSeedStage(options: StageOptions) {
         try {
           summary = await summarizeDiscoveryBatch(
             options.router,
-            job.question,
+            researchRequest(job),
             batches[index],
             settings.privacy.localOnly,
             signal
@@ -307,14 +339,14 @@ async function runExpansionStage(options: StageOptions) {
     if (pending.length === 0) continue;
     job.currentBatch = index + 1;
     await checkpoint(undefined, `Expansion · batch ${index + 1} of ${batches.length}`);
-    const largeJob = tasks.length >= LARGE_RESEARCH_THRESHOLD;
+    const largeJob = usesBatchedPipeline(job, tasks.length);
     await runWorkerPool(pending, settings.research.workerConcurrency, async task => {
       const items = (job.expansionPlan || []).filter(
         item => item.taskId === task.id && item.status === 'planned'
       );
       try {
-        const workerOptions = { ...options, task, question: job.question };
-        if (largeJob) await finalizeResearchSubjectWithoutModel(workerOptions);
+        const workerOptions = { ...options, task, question: researchRequest(job) };
+        if (largeJob) await finalizeResearchSubjectWithoutModel(workerOptions, items);
         else await finalizeResearchSubject(workerOptions, items);
       } catch (error) {
         if (signal.aborted) throw error;
@@ -348,7 +380,7 @@ async function runBatchSynthesis(
     try {
       summary = await summarizeFinalBatch(
         router,
-        job.question,
+        researchRequest(job),
         batches[index],
         settings.privacy.localOnly,
         signal
@@ -387,12 +419,12 @@ async function selectRelevantTasks(
     context: task.title,
     isExternal: true,
   }));
-  const scores = requestsEverySubject(job.question)
+  const scores = requestsEverySubject(researchRequest(job))
     ? links.map(() => 1)
     : await classifyLinks(
         router,
         links,
-        job.question,
+        researchRequest(job),
         signal,
         thought => void checkpoint(undefined, thought),
         settings.research.workerConcurrency
@@ -462,9 +494,9 @@ async function selectAttachmentExpansion(
       )
       .join('\n\n');
     const result = await router.complete(
-      job.question,
+      researchRequest(job),
       { hasLinks: true, contentLength: descriptions.length },
-      `Decide which saved context pages contain child links that should be researched for the user request. A page can still ground the final answer when its links are not expanded. Return only a JSON array of page IDs whose child links should be expanded.\n\nUSER REQUEST:\n${job.question}\n\nPAGES:\n${descriptions}`,
+      `Decide which saved context pages contain child links that should be researched for the user request. A page can still ground the final answer when its links are not expanded. Return only a JSON array of page IDs whose child links should be expanded.\n\nUSER REQUEST:\n${researchRequest(job)}\n\nPAGES:\n${descriptions}`,
       { temperature: 0.1, maxTokens: 300, signal }
     );
     const parsed: unknown = JSON.parse(result.text.match(/\[[\s\S]*\]/)?.[0] || result.text);
@@ -510,6 +542,18 @@ function createBudgetedRouter(job: ResearchJob, router: ResearchRouter): Researc
     return router.complete(...args);
   };
   return { complete };
+}
+
+function researchRequest(job: ResearchJob): string {
+  return job.conversationBrief || job.question;
+}
+
+function usesBatchedPipeline(job: ResearchJob, taskCount: number): boolean {
+  return job.useBatchedPipeline ?? requiresBatchedPipeline(taskCount, job.modelRequestBudget || 24);
+}
+
+function requiresBatchedPipeline(taskCount: number, modelRequestBudget: number): boolean {
+  return taskCount * 2 > modelRequestBudget - SYNTHESIS_MODEL_REQUEST_RESERVE;
 }
 
 export async function setResearchJobStatus(
@@ -585,6 +629,10 @@ function prepareJob(job: ResearchJob, settings: StorageSettings) {
   job.batchSummaries ||= [];
   job.expansionPlan ||= [];
   job.sourceRegistry ||= [];
+  job.useBatchedPipeline ??= requiresBatchedPipeline(
+    job.tasks.filter(task => task.status !== 'skipped').length,
+    job.modelRequestBudget || 24
+  );
   if (job.sourceRegistry.length === 0 && job.tasks.every(task => task.seedStatus !== 'completed')) {
     job.sourceBudget = settings.research.maxUniqueSourcesPerJob;
   } else {

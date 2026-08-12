@@ -58,6 +58,7 @@ export async function synthesizeResearch(
   signal: AbortSignal,
   onLevel?: (level: number, summaries: string[]) => Promise<void>
 ) {
+  const request = job.conversationBrief || job.question;
   let summaries = (job.batchSummaries || [])
     .filter(summary => summary.kind === 'final')
     .map(summary => summary.summary);
@@ -73,9 +74,9 @@ export async function synthesizeResearch(
     for (const group of groups) {
       throwIfAborted(signal);
       const result = await router.complete(
-        job.question,
+        request,
         { hasLinks: true, contentLength: group.join('\n\n---\n\n').length },
-        `Merge these research summaries into a more compact cited summary for the user request. Preserve URLs, important evidence, disagreements, and uncertainty. Do not invent facts.\n\nUSER REQUEST:\n${job.question}\n\nSUMMARIES:\n${group.join('\n\n---\n\n')}`,
+        `Merge these research summaries into a more compact cited summary for the user request. Preserve URLs, important evidence, disagreements, and uncertainty. Do not invent facts.\n\nUSER REQUEST:\n${request}\n\nSUMMARIES:\n${group.join('\n\n---\n\n')}`,
         { temperature: 0.2, maxTokens: 1800, signal }
       );
       next.push(result.text);
@@ -86,9 +87,9 @@ export async function synthesizeResearch(
 
   const context = formatContextPages(job);
   const final = await router.complete(
-    job.question,
+    request,
     { hasLinks: true, contentLength: summaries[0].length },
-    `Answer the user's request using the saved context pages and compact research summary below. The context pages are authoritative framing or qualification criteria even when their child links were not expanded. Follow the requested output and tone, combine related findings, cite supporting URLs, and clearly label uncertain or missing evidence. Do not recommend exporting to Word, PDF, or another format unless the user explicitly requested an export.\n\nUSER REQUEST:\n${job.question}\n\nSAVED CONTEXT PAGES:\n${context || 'None'}\n\nRESEARCH:\n${summaries[0]}`,
+    `Answer the user's request using the saved context pages and compact research summary below. The context pages are authoritative framing or qualification criteria even when their child links were not expanded. Follow the requested output and tone, combine related findings, cite supporting URLs, and clearly label uncertain or missing evidence. When the user requests the same or exact format as a saved context page, reproduce that page's headings, table columns, and row structure instead of inventing an alternative format. Do not recommend exporting to Word, PDF, or another format unless the user explicitly requested an export.\n\nUSER REQUEST:\n${request}\n\nSAVED CONTEXT PAGES:\n${context || 'None'}\n\nRESEARCH:\n${summaries[0]}`,
     { temperature: 0.3, maxTokens: 4096, signal }
   );
   const warnings = [
