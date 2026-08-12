@@ -165,6 +165,10 @@ describe('NIMClient', () => {
                 done: false,
                 value: new TextEncoder().encode(chunks.slice(50, 100)),
               })
+              .mockResolvedValueOnce({
+                done: false,
+                value: new TextEncoder().encode(chunks.slice(100)),
+              })
               .mockResolvedValueOnce({ done: true, value: undefined }),
             releaseLock: jest.fn(),
           }),
@@ -200,6 +204,38 @@ describe('NIMClient', () => {
       await expect(generator.next()).rejects.toThrow(
         'NIM API error (429 Too Many Requests): Rate limited'
       );
+    });
+
+    it('rejects unsupported tool-call deltas', async () => {
+      const chunks = [
+        'data: {"choices":[{"delta":{"tool_calls":[{"id":"tool-1"}]}}]}\n\n',
+        'data: [DONE]\n\n',
+      ].join('');
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        body: {
+          getReader: () => ({
+            read: jest
+              .fn()
+              .mockResolvedValueOnce({ done: false, value: new TextEncoder().encode(chunks) })
+              .mockResolvedValueOnce({ done: true, value: undefined }),
+            cancel: jest.fn().mockResolvedValue(undefined),
+            releaseLock: jest.fn(),
+          }),
+        },
+      });
+
+      const consume = async () => {
+        const stream = client.streamChatCompletion({
+          model: 'nemotron-3-ultra',
+          messages: [],
+        });
+        while (!(await stream.next()).done) {
+          // Consume every streamed item.
+        }
+      };
+
+      await expect(consume()).rejects.toThrow('unsupported tool call');
     });
 
     it('reports the abort reason instead of Chrome stream internals', async () => {

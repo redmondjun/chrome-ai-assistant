@@ -418,6 +418,7 @@ export async function analyzeWithReasoning(
   signal?.throwIfAborted();
   logStage('generation-started', { retrievedPages: currentVisits.length });
 
+  let generatedContent = '';
   for await (const result of router.streamComplete(
     question,
     {
@@ -430,8 +431,11 @@ export async function analyzeWithReasoning(
     prompt,
     { temperature: 0.7, maxTokens: 4096, signal }
   )) {
+    generatedContent += result.chunk;
     callbacks.onChunk(result.chunk);
   }
+
+  if (!generatedContent.trim()) throw new Error('The model completed without returning an answer.');
 
   callbacks.onReasoning?.({
     step: shouldFollow ? 4 : 3,

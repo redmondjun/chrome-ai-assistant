@@ -159,6 +159,94 @@ describe('ModelRouter', () => {
 
       expect(chunks).toEqual(['Hello ', 'world']);
     });
+
+    it('retries an empty Ultra response with GLM 5.2 without changing settings', async () => {
+      require('../api/local-client').isLocalModelReady.mockReturnValue(false);
+      const { NIMClient } = require('../api/nim-client');
+      const cloudStream = jest
+        .fn()
+        .mockImplementationOnce(async function* () {})
+        .mockImplementationOnce(async function* () {
+          yield 'Recovered answer';
+        });
+      NIMClient.prototype.streamChatCompletion = cloudStream;
+      const ultraRouter = new ModelRouter({
+        ...mockSettings,
+        cloudModel: 'nemotron-3-ultra',
+        useLocal: false,
+      });
+
+      const chunks: string[] = [];
+      for await (const { chunk } of ultraRouter.streamComplete(
+        'continue',
+        { hasLinks: true, contentLength: 1000 },
+        'prompt'
+      )) {
+        chunks.push(chunk);
+      }
+
+      expect(chunks).toEqual(['Recovered answer']);
+      expect(cloudStream.mock.calls.map(call => call[0].model)).toEqual([
+        'nemotron-3-ultra',
+        'glm-5.2',
+      ]);
+    });
+
+    it('suppresses literal tool markup and retries with GLM 5.2', async () => {
+      require('../api/local-client').isLocalModelReady.mockReturnValue(false);
+      const { NIMClient } = require('../api/nim-client');
+      NIMClient.prototype.streamChatCompletion = jest
+        .fn()
+        .mockImplementationOnce(async function* () {
+          yield 'I will visit it.\n\n<tool_call>FUNCTIONS.visit_url:';
+        })
+        .mockImplementationOnce(async function* () {
+          yield 'Answer from saved evidence';
+        });
+      const ultraRouter = new ModelRouter({
+        ...mockSettings,
+        cloudModel: 'nemotron-3-ultra',
+        useLocal: false,
+      });
+
+      const chunks: string[] = [];
+      for await (const { chunk } of ultraRouter.streamComplete(
+        'continue',
+        { hasLinks: true, contentLength: 1000 },
+        'prompt'
+      )) {
+        chunks.push(chunk);
+      }
+
+      expect(chunks.join('')).toBe('Answer from saved evidence');
+      expect(chunks.join('')).not.toContain('tool_call');
+    });
+
+    it('throws when both the configured model and GLM return empty responses', async () => {
+      require('../api/local-client').isLocalModelReady.mockReturnValue(false);
+      const { NIMClient } = require('../api/nim-client');
+      NIMClient.prototype.streamChatCompletion = jest
+        .fn()
+        .mockImplementation(async function* () {});
+      const ultraRouter = new ModelRouter({
+        ...mockSettings,
+        cloudModel: 'nemotron-3-ultra',
+        useLocal: false,
+      });
+
+      const consume = async () => {
+        const stream = ultraRouter.streamComplete(
+          'continue',
+          { hasLinks: true, contentLength: 1000 },
+          'prompt'
+        );
+        while (!(await stream.next()).done) {
+          // Consume every streamed item.
+        }
+      };
+
+      await expect(consume()).rejects.toThrow('model returned no answer');
+    });
   });
 
   describe('updateSettings', () => {

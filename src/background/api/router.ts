@@ -1,4 +1,4 @@
-import { NIMClient } from './nim-client';
+import { InvalidModelResponseError, NIMClient } from './nim-client';
 import {
   completeLocal,
   streamLocal,
@@ -84,6 +84,8 @@ export class ModelRouter {
           fullText += chunk;
           yield { chunk, usedLocal: true };
         }
+        if (!fullText.trim())
+          throw new InvalidModelResponseError('The local model returned no answer.');
         return { text: fullText, modelUsed: 'local' };
       } catch (e) {
         if (options.signal?.aborted) throw e;
@@ -93,12 +95,56 @@ export class ModelRouter {
       }
     }
 
+    let emitted = false;
+    try {
+      const primary = this.validatedCloudStream(
+        this.settings.cloudModel,
+        prompt,
+        'You are a helpful AI assistant. You have no tools and cannot call functions, browse, or perform actions. Answer only with ordinary text using the supplied context.',
+        options
+      );
+      let fullText = '';
+      for await (const chunk of primary) {
+        emitted = true;
+        fullText += chunk;
+        yield { chunk, usedLocal: false };
+      }
+      return { text: fullText, modelUsed: 'cloud' };
+    } catch (error) {
+      if (emitted || !(error instanceof InvalidModelResponseError)) throw error;
+      console.warn('[router]', 'invalid-model-response-fallback', {
+        from: this.settings.cloudModel,
+        to: 'glm-5.2',
+        reason: error.message,
+      });
+    }
+
+    let fallbackText = '';
+    for await (const chunk of this.validatedCloudStream(
+      'glm-5.2',
+      prompt,
+      'Answer the user directly using only the supplied context. You have no tools or function-calling capability. Never emit tool-call markup, function names, or promises to browse. Return ordinary answer text.',
+      options
+    )) {
+      fallbackText += chunk;
+      yield { chunk, usedLocal: false };
+    }
+    return { text: fallbackText, modelUsed: 'cloud' };
+  }
+
+  private async *validatedCloudStream(
+    model: string,
+    prompt: string,
+    systemPrompt: string,
+    options: CompletionOptions
+  ): AsyncGenerator<string> {
+    let pending = '';
     let fullText = '';
     for await (const chunk of this.nimClient.streamChatCompletion(
       {
-        model: this.settings.cloudModel,
+        model,
         messages: [
-          { role: 'system', content: 'You are a helpful AI assistant.' },
+          { role: 'system', content: systemPrompt },
           { role: 'user', content: prompt },
         ],
         temperature: options.temperature ?? 0.7,
@@ -109,10 +155,19 @@ export class ModelRouter {
       options.signal
     )) {
       fullText += chunk;
-      yield { chunk, usedLocal: false };
+      pending += chunk;
+      if (containsToolMarkup(fullText)) {
+        throw new InvalidModelResponseError(
+          'The model emitted unsupported tool-call markup instead of answering.'
+        );
+      }
+      if (pending.length >= 512) {
+        yield pending;
+        pending = '';
+      }
     }
-
-    return { text: fullText, modelUsed: 'cloud' };
+    if (!fullText.trim()) throw new InvalidModelResponseError('The model returned no answer.');
+    if (pending) yield pending;
   }
 
   private shouldUseLocal(
@@ -148,6 +203,10 @@ export class ModelRouter {
   getLocalStatus(): { ready: boolean; progress?: number } {
     return { ready: isLocalModelReady() };
   }
+}
+
+function containsToolMarkup(content: string): boolean {
+  return /<\/?(?:tool_call|invoke)(?:>|\s)|\bFUNCTIONS\.[a-z_][a-z0-9_]*\s*:/i.test(content);
 }
 
 export function createRouter(settings: ModelSettings, localOnly = false): ModelRouter {

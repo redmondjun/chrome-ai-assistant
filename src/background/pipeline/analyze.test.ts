@@ -115,6 +115,25 @@ describe('Analysis Pipeline', () => {
       );
     });
 
+    it('does not mark an empty model stream as a generated answer', async () => {
+      mockRouter.streamComplete.mockImplementation(async function* () {});
+
+      await expect(
+        analyzeWithReasoning(
+          mockRouter as any,
+          mockContent,
+          'Continue',
+          mockSettings,
+          mockCallbacks
+        )
+      ).rejects.toThrow('completed without returning an answer');
+
+      expect(mockCallbacks.onReasoning).not.toHaveBeenCalledWith(
+        expect.objectContaining({ thought: 'Answer generated.' })
+      );
+      expect(mockCallbacks.onDone).not.toHaveBeenCalled();
+    });
+
     it('classifies and fetches relevant links', async () => {
       mockRouter.complete.mockResolvedValue({ text: '[0.9, 0.1]' });
       mockRouter.streamComplete.mockImplementation(async function* () {

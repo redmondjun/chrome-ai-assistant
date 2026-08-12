@@ -47,6 +47,8 @@ const REQUEST_TIMEOUT_MS = 120000;
 const MAX_TRANSIENT_ATTEMPTS = 3;
 const RETRY_BASE_DELAY_MS = 1000;
 
+export class InvalidModelResponseError extends Error {}
+
 export class NIMClient {
   private apiKey: string;
   private baseUrl: string;
@@ -160,18 +162,16 @@ export class NIMClient {
           buffer = lines.pop() || '';
 
           for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              const data = line.slice(6).trim();
-              if (data === '[DONE]') return;
-              try {
-                const parsed = JSON.parse(data);
-                const content = parsed.choices[0]?.delta?.content;
-                if (content) yield content;
-              } catch {
-                // Ignore parse errors
-              }
-            }
+            const event = parseStreamLine(line);
+            if (event.done) return;
+            if (event.content) yield event.content;
           }
+        }
+        buffer += decoder.decode();
+        for (const line of buffer.split('\n')) {
+          const event = parseStreamLine(line);
+          if (event.done) return;
+          if (event.content) yield event.content;
         }
       } catch (error) {
         if (requestSignal.signal.aborted) throw requestSignal.signal.reason;
@@ -221,6 +221,35 @@ export class NIMClient {
       `${response.status}${response.statusText ? ` ${response.statusText}` : ''}`.trim();
     return new Error(`NIM API error (${status}): ${detail || 'No error details returned'}`);
   }
+}
+
+function parseStreamLine(line: string): { done: boolean; content?: string } {
+  if (!line.startsWith('data:')) return { done: false };
+  const data = line.slice(5).trim();
+  if (!data) return { done: false };
+  if (data === '[DONE]') return { done: true };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(data);
+  } catch {
+    throw new InvalidModelResponseError('The model returned malformed streaming data.');
+  }
+  if (!isObject(parsed) || !Array.isArray(parsed.choices)) return { done: false };
+  const choice = parsed.choices[0];
+  if (!isObject(choice) || !isObject(choice.delta)) return { done: false };
+  if (Array.isArray(choice.delta.tool_calls) && choice.delta.tool_calls.length > 0) {
+    throw new InvalidModelResponseError(
+      'The model attempted an unsupported tool call instead of answering.'
+    );
+  }
+  return {
+    done: false,
+    content: typeof choice.delta.content === 'string' ? choice.delta.content : undefined,
+  };
+}
+
+function isObject(value: unknown): value is { [key: string]: unknown } {
+  return typeof value === 'object' && value !== null;
 }
 
 function isTransientStatus(status: number) {
