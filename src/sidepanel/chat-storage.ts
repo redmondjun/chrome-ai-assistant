@@ -85,7 +85,7 @@ async function hydrateResearchJobs(chats: ChatConversation[]): Promise<ChatConve
 }
 
 async function hydrateResearchMessage(message: ChatMessage): Promise<ChatMessage> {
-  if (!message.researchJobId) return message;
+  if (!message.researchJobId) return hydrateAgentRun(message);
   try {
     const response = await chrome.runtime.sendMessage({
       type: 'GET_RESEARCH_JOB',
@@ -98,6 +98,40 @@ async function hydrateResearchMessage(message: ChatMessage): Promise<ChatMessage
       content: job.finalAnswer || job.partialAnswer || message.content,
       researchProgress: job.progress,
       isStreaming: ['queued', 'running'].includes(job.status),
+    };
+  } catch {
+    return message;
+  }
+}
+
+async function hydrateAgentRun(message: ChatMessage): Promise<ChatMessage> {
+  if (!message.agentRun?.attemptId) return message;
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: 'GET_AGENT_RUN',
+      attemptId: message.agentRun.attemptId,
+    });
+    const run = response?.run;
+    if (!run) return { ...message, isStreaming: false };
+    const terminal = ['completed', 'failed', 'stopped', 'interrupted'].includes(run.status);
+    const errorContent =
+      run.status === 'failed' || run.status === 'interrupted'
+        ? `Error: ${run.error?.message || run.activity} (Diagnostic ID: ${run.diagnosticId || run.attemptId})`
+        : message.content;
+    return {
+      ...message,
+      content: errorContent,
+      agentRun: {
+        attemptId: run.attemptId,
+        status: run.status,
+        health: run.health,
+        activity: run.activity,
+        startedAt: run.startedAt,
+        operationStartedAt: run.operationStartedAt,
+        lastHeartbeatAt: run.lastHeartbeatAt,
+        diagnosticId: run.diagnosticId,
+      },
+      isStreaming: !terminal,
     };
   } catch {
     return message;

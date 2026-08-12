@@ -22,6 +22,7 @@ import type {
   ResearchTask,
   StorageSettings,
   TabContent,
+  CompletionOptions,
 } from '@/shared/types';
 
 type ResearchRouter = Pick<ModelRouter, 'complete'>;
@@ -123,10 +124,17 @@ export async function runResearchJob(
   jobId: string,
   settings: StorageSettings,
   callbacks: ResearchCallbacks,
-  signal: AbortSignal
+  signal: AbortSignal,
+  diagnostic?: CompletionOptions['diagnostic']
 ): Promise<void> {
   const job = await getResearchJob(jobId);
   if (!job || job.status === 'cancelled' || job.status === 'completed') return;
+
+  if (diagnostic) {
+    job.progress.attemptId = diagnostic.attemptId;
+    job.progress.health = 'healthy';
+    job.progress.lastHeartbeatAt = Date.now();
+  }
 
   prepareJob(job, settings);
   const budgetedRouter = createBudgetedRouter(job, router);
@@ -136,6 +144,7 @@ export async function runResearchJob(
     budget: job.sourceBudget || settings.research.maxUniqueSourcesPerJob,
     signal,
     checkpoint,
+    diagnostic,
   });
   const getEvidence = (task: ResearchTask) =>
     (task.sourceKeys || [])
@@ -144,8 +153,8 @@ export async function runResearchJob(
 
   try {
     await checkpoint(undefined, 'Selecting research subjects...');
-    await selectAttachmentExpansion(budgetedRouter, job, checkpoint, signal);
-    await selectRelevantTasks(budgetedRouter, job, settings, checkpoint, signal);
+    await selectAttachmentExpansion(budgetedRouter, job, checkpoint, signal, diagnostic);
+    await selectRelevantTasks(budgetedRouter, job, settings, checkpoint, signal, diagnostic);
     const selectedTasks = job.tasks.filter(task => task.status !== 'skipped');
     if (selectedTasks.length === 0) {
       job.partialAnswer = createPartialResearchAnswer(job);
@@ -169,6 +178,7 @@ export async function runResearchJob(
       getEvidence,
       checkpoint,
       signal,
+      diagnostic,
     });
     throwIfAborted(signal);
 
@@ -186,10 +196,19 @@ export async function runResearchJob(
       getEvidence,
       checkpoint,
       signal,
+      diagnostic,
     });
     throwIfAborted(signal);
 
-    await runBatchSynthesis(budgetedRouter, job, selectedTasks, settings, checkpoint, signal);
+    await runBatchSynthesis(
+      budgetedRouter,
+      job,
+      selectedTasks,
+      settings,
+      checkpoint,
+      signal,
+      diagnostic
+    );
     throwIfAborted(signal);
 
     setResearchStage(job, 'final-synthesis');
@@ -202,7 +221,8 @@ export async function runResearchJob(
       async (level, summaries) => {
         job.synthesisState = { level, summaries };
         await checkpoint(undefined, `Combining research summaries · level ${level}`);
-      }
+      },
+      diagnostic
     );
     const failedSubjects = job.tasks.filter(task => task.status === 'failed').length;
     if (failedSubjects > 0) {
@@ -242,6 +262,7 @@ interface StageOptions {
   getEvidence: (task: ResearchTask) => ResearchEvidence[];
   checkpoint: ResearchCheckpoint;
   signal: AbortSignal;
+  diagnostic?: CompletionOptions['diagnostic'];
 }
 
 async function runSeedStage(options: StageOptions) {
@@ -280,7 +301,8 @@ async function runSeedStage(options: StageOptions) {
             job.question,
             batches[index],
             settings.privacy.localOnly,
-            signal
+            signal,
+            options.diagnostic
           );
         } catch (error) {
           if (signal.aborted) throw error;
@@ -333,7 +355,8 @@ async function runBatchSynthesis(
   tasks: ResearchTask[],
   settings: StorageSettings,
   checkpoint: ResearchCheckpoint,
-  signal: AbortSignal
+  signal: AbortSignal,
+  diagnostic?: CompletionOptions['diagnostic']
 ) {
   setResearchStage(job, 'batch-synthesis');
   const completed = tasks.filter(task => task.status === 'completed' && task.report);
@@ -351,7 +374,8 @@ async function runBatchSynthesis(
         job.question,
         batches[index],
         settings.privacy.localOnly,
-        signal
+        signal,
+        diagnostic
       );
     } catch (error) {
       if (signal.aborted) throw error;
@@ -372,7 +396,8 @@ async function selectRelevantTasks(
   job: ResearchJob,
   settings: StorageSettings,
   checkpoint: ResearchCheckpoint,
-  signal: AbortSignal
+  signal: AbortSignal,
+  diagnostic?: CompletionOptions['diagnostic']
 ) {
   const candidates = job.tasks.filter(
     task =>
@@ -395,7 +420,8 @@ async function selectRelevantTasks(
         job.question,
         signal,
         thought => void checkpoint(undefined, thought),
-        settings.research.workerConcurrency
+        settings.research.workerConcurrency,
+        diagnostic
       );
   candidates.forEach((task, index) => {
     const score = scores[index];
@@ -444,7 +470,8 @@ async function selectAttachmentExpansion(
   router: ResearchRouter,
   job: ResearchJob,
   checkpoint: ResearchCheckpoint,
-  signal: AbortSignal
+  signal: AbortSignal,
+  diagnostic?: CompletionOptions['diagnostic']
 ) {
   const pages = (job.contextPages || []).filter(page =>
     job.tasks.some(task => task.originPageId === page.id && task.status === 'queued')
@@ -465,7 +492,7 @@ async function selectAttachmentExpansion(
       job.question,
       { hasLinks: true, contentLength: descriptions.length },
       `Decide which saved context pages contain child links that should be researched for the user request. A page can still ground the final answer when its links are not expanded. Return only a JSON array of page IDs whose child links should be expanded.\n\nUSER REQUEST:\n${job.question}\n\nPAGES:\n${descriptions}`,
-      { temperature: 0.1, maxTokens: 300, signal }
+      { temperature: 0.1, maxTokens: 300, signal, diagnostic }
     );
     const parsed: unknown = JSON.parse(result.text.match(/\[[\s\S]*\]/)?.[0] || result.text);
     if (Array.isArray(parsed)) {

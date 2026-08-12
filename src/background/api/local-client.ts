@@ -143,11 +143,19 @@ export async function* streamLocal(
     topP?: number;
     stop?: string[];
     signal?: AbortSignal;
+    onToken?: (token: string) => void;
   } = {}
 ): AsyncGenerator<{ chunk: string }> {
   if (!wllama) throw new Error('Local model not initialized');
 
-  const { maxTokens = 1024, temperature = 0.7, topP = 0.9, stop = ['\n\n'], signal } = options;
+  const {
+    maxTokens = 1024,
+    temperature = 0.7,
+    topP = 0.9,
+    stop = ['\n\n'],
+    signal,
+    onToken,
+  } = options;
 
   const chunks: string[] = [];
   await wllama.createCompletion({
@@ -161,6 +169,7 @@ export async function* streamLocal(
     onData: (data: any) => {
       const chunk = data.text || '';
       chunks.push(chunk);
+      onToken?.(chunk);
     },
   });
 

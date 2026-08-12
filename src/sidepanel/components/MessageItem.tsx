@@ -6,7 +6,13 @@ import { ResearchJobPanel } from './ResearchJobPanel';
 import { StreamingProgress } from './StreamingProgress';
 import type { ChatMessage } from '@/shared/types';
 
-export function MessageItem({ message }: { message: ChatMessage }) {
+export function MessageItem({
+  message,
+  onRetry,
+}: {
+  message: ChatMessage;
+  onRetry?: (messageId: string) => void;
+}) {
   const isUser = message.role === 'user';
   const isError = !isUser && message.content.startsWith('Error:');
   const renderedContent = useMemo(
@@ -47,6 +53,33 @@ export function MessageItem({ message }: { message: ChatMessage }) {
           <TypingIndicator />
         )}
       </div>
+      {message.agentRun?.diagnosticId &&
+        ['failed', 'interrupted'].includes(message.agentRun.status) && (
+          <small className="danger-text">Diagnostic ID: {message.agentRun.diagnosticId}</small>
+        )}
+      {message.agentRun?.health === 'stalled-suspected' && (
+        <div className="research-job-actions" aria-label="Stalled request actions">
+          <span className="danger-text">
+            No operation progress was detected. Diagnostic ID:{' '}
+            {message.agentRun.diagnosticId || message.agentRun.attemptId}
+          </span>
+          <button type="button" onClick={() => onRetry?.(message.id)}>
+            Retry in parallel
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              void chrome.runtime.sendMessage(
+                message.researchJobId
+                  ? { type: 'PAUSE_RESEARCH', jobId: message.researchJobId }
+                  : { type: 'STOP_GENERATION', messageId: message.id }
+              )
+            }
+          >
+            Stop this attempt
+          </button>
+        </div>
+      )}
     </article>
   );
 }

@@ -59,6 +59,7 @@ export default function App() {
         messages={chat.messages}
         promptsEnabled={pageReady}
         onPrompt={prompt => void chat.send(prompt, savedPages.selectedPages)}
+        onRetry={messageId => void chat.retry(messageId)}
       />
       <PageAttachments
         pages={savedPages.pages}

@@ -228,6 +228,94 @@ export interface ResearchProgress {
   sourceBudgetUsed?: number;
   sourceBudgetTotal?: number;
   sourceBudgetOverflow?: number;
+  attemptId?: string;
+  health?: AgentRunHealth;
+  operationStartedAt?: number;
+  lastHeartbeatAt?: number;
+  diagnosticId?: string;
+}
+
+export type AgentRunStatus =
+  'accepted' | 'running' | 'completed' | 'failed' | 'stopped' | 'interrupted';
+export type AgentRunHealth = 'healthy' | 'stalled-suspected';
+export type AgentOperation =
+  | 'content'
+  | 'router'
+  | 'link-decision'
+  | 'link-scoring'
+  | 'source-fetch'
+  | 'model-request'
+  | 'local-generation'
+  | 'research-orchestration'
+  | 'research-worker'
+  | 'research-synthesis';
+
+export interface SanitizedError {
+  name: string;
+  message: string;
+  stack?: string;
+  code?: string;
+}
+
+export interface AgentRunProgress {
+  attemptId: string;
+  status: AgentRunStatus;
+  health: AgentRunHealth;
+  activity: string;
+  startedAt: number;
+  operationStartedAt?: number;
+  lastHeartbeatAt: number;
+  diagnosticId?: string;
+}
+
+export interface AgentRunRecord extends AgentRunProgress {
+  kind: 'standard' | 'deep-research';
+  messageId: string;
+  jobId?: string;
+  taskId?: string;
+  currentOperation?: AgentOperation;
+  operationDeadlineAt?: number;
+  finishedAt?: number;
+  startupId: string;
+  error?: SanitizedError;
+}
+
+export type DiagnosticComponent =
+  'analysis' | 'research' | 'router' | 'nim' | 'local-model' | 'source-fetch' | 'service-worker';
+
+export interface DiagnosticEvent {
+  id: string;
+  timestamp: number;
+  level: 'debug' | 'info' | 'warn' | 'error';
+  component: DiagnosticComponent;
+  event: string;
+  attemptId?: string;
+  messageId?: string;
+  jobId?: string;
+  taskId?: string;
+  operation?: AgentOperation;
+  elapsedMs?: number;
+  url?: string;
+  model?: string;
+  route?: 'local' | 'cloud';
+  httpStatus?: number;
+  error?: SanitizedError;
+  metadata?: Record<string, string | number | boolean | null>;
+}
+
+export interface DiagnosticStore {
+  version: 1;
+  events: DiagnosticEvent[];
+  runs: AgentRunRecord[];
+}
+
+export interface DiagnosticExport {
+  schemaVersion: 1;
+  exportedAt: number;
+  extensionVersion: string;
+  userAgent: string;
+  configuration: Record<string, unknown>;
+  store: DiagnosticStore;
 }
 
 export interface ResearchJob {
@@ -298,6 +386,8 @@ export interface ChatMessage {
   isStreaming?: boolean;
   researchJobId?: string;
   researchProgress?: ResearchProgress;
+  requestMode?: 'standard' | 'deep-research';
+  agentRun?: AgentRunProgress;
 }
 
 export interface ChatConversation {
@@ -334,6 +424,12 @@ export interface CompletionOptions {
   topP?: number;
   stop?: string[];
   signal?: AbortSignal;
+  diagnostic?: {
+    attemptId: string;
+    messageId?: string;
+    jobId?: string;
+    taskId?: string;
+  };
 }
 
 export interface CompletionResult {
@@ -370,7 +466,11 @@ export interface BackgroundMessage {
     | 'RESUME_RESEARCH'
     | 'RETRY_RESEARCH'
     | 'CANCEL_RESEARCH'
-    | 'GET_RESEARCH_JOB';
+    | 'GET_RESEARCH_JOB'
+    | 'GET_DIAGNOSTICS'
+    | 'CLEAR_DIAGNOSTICS'
+    | 'GET_AGENT_RUN'
+    | 'RETRY_AGENT_RUN';
   tabId?: number;
   url?: string;
   question?: string;
@@ -385,6 +485,7 @@ export interface BackgroundMessage {
   token?: string;
   conversations?: ChatConversation[];
   jobId?: string;
+  attemptId?: string;
 }
 
 export interface ContentScriptMessage {
@@ -402,6 +503,8 @@ export interface SidePanelMessage {
     | 'LINK_DECISION'
     | 'RESEARCH_PROGRESS'
     | 'RESEARCH_TASK_UPDATE'
+    | 'AGENT_RUN_PROGRESS'
+    | 'STREAM_DONE'
     | 'DONE';
   chunk?: string;
   messageId?: string;
@@ -411,6 +514,7 @@ export interface SidePanelMessage {
   done?: boolean;
   message?: string;
   researchProgress?: ResearchProgress;
+  progress?: AgentRunProgress;
 }
 
 export type { StorageSettings as Settings };

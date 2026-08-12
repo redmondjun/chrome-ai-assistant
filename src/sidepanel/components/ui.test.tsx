@@ -86,6 +86,35 @@ describe('side panel UI', () => {
     expect(screen.getByText(/request failed/i)).toBeInTheDocument();
   });
 
+  it('offers a parallel retry for a durably detected stalled attempt', () => {
+    const onRetry = jest.fn();
+    render(
+      <MessageItem
+        onRetry={onRetry}
+        message={{
+          id: 'stalled-message',
+          role: 'assistant',
+          content: '',
+          timestamp: Date.now(),
+          isStreaming: true,
+          agentRun: {
+            attemptId: 'attempt-1',
+            status: 'running',
+            health: 'stalled-suspected',
+            activity: 'Waiting for the model.',
+            startedAt: Date.now(),
+            lastHeartbeatAt: Date.now() - 120_000,
+            diagnosticId: 'diagnostic-1',
+          },
+        }}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry in parallel' }));
+    expect(onRetry).toHaveBeenCalledWith('stalled-message');
+    expect(screen.getByText(/diagnostic-1/)).toBeInTheDocument();
+  });
+
   it('opens web links from generated answers in a browser tab', () => {
     render(
       <MessageItem

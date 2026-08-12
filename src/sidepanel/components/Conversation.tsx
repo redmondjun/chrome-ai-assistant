@@ -7,9 +7,10 @@ interface ConversationProps {
   messages: ChatMessage[];
   promptsEnabled: boolean;
   onPrompt: (prompt: string) => void;
+  onRetry?: (messageId: string) => void;
 }
 
-export function Conversation({ messages, promptsEnabled, onPrompt }: ConversationProps) {
+export function Conversation({ messages, promptsEnabled, onPrompt, onRetry }: ConversationProps) {
   const conversationRef = useRef<HTMLElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const shouldAutoScrollRef = useRef(true);
@@ -38,7 +39,9 @@ export function Conversation({ messages, promptsEnabled, onPrompt }: Conversatio
       {messages.length === 0 ? (
         <EmptyState enabled={promptsEnabled} onPrompt={onPrompt} />
       ) : (
-        messages.map(message => <MessageItem key={message.id} message={message} />)
+        messages.map(message => (
+          <MessageItem key={message.id} message={message} onRetry={onRetry} />
+        ))
       )}
       <div ref={endRef} />
     </section>

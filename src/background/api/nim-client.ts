@@ -79,9 +79,15 @@ export class NIMClient {
     return this.modelMap[model] || model;
   }
 
-  async chatCompletion(request: ChatRequest, signal?: AbortSignal): Promise<string> {
+  async chatCompletion(
+    request: ChatRequest,
+    signal?: AbortSignal,
+    diagnostic?: CompletionOptions['diagnostic']
+  ): Promise<string> {
     for (let attempt = 1; attempt <= MAX_TRANSIENT_ATTEMPTS; attempt++) {
       const requestSignal = createRequestSignal(signal);
+      const startedAt = Date.now();
+      await this.recordRequest('request-started', 'info', request, diagnostic);
       try {
         const response = await fetch(`${this.baseUrl}/chat/completions`, {
           method: 'POST',
@@ -95,6 +101,17 @@ export class NIMClient {
           }),
           signal: requestSignal.signal,
         });
+
+        await this.recordRequest(
+          'response-received',
+          response.ok ? 'info' : 'warn',
+          request,
+          diagnostic,
+          {
+            httpStatus: response.status,
+            elapsedMs: Date.now() - startedAt,
+          }
+        );
 
         if (!response.ok) {
           const error = await this.createApiError(response);
@@ -113,7 +130,20 @@ export class NIMClient {
         }
 
         const data = await response.json();
-        return data.choices[0]?.message?.content || '';
+        const content = data.choices?.[0]?.message?.content;
+        if (typeof content !== 'string' || content.length === 0) {
+          throw new Error('NIM API returned no completion content.');
+        }
+        await this.recordRequest('request-completed', 'info', request, diagnostic, {
+          elapsedMs: Date.now() - startedAt,
+        });
+        return content;
+      } catch (error) {
+        await this.recordRequest('request-failed', 'error', request, diagnostic, {
+          elapsedMs: Date.now() - startedAt,
+          error,
+        });
+        throw error;
       } finally {
         requestSignal.dispose();
       }
@@ -121,8 +151,17 @@ export class NIMClient {
     throw new Error('NIM request failed after transient retries.');
   }
 
-  async *streamChatCompletion(request: ChatRequest, signal?: AbortSignal): AsyncGenerator<string> {
+  async *streamChatCompletion(
+    request: ChatRequest,
+    signal?: AbortSignal,
+    diagnostic?: CompletionOptions['diagnostic']
+  ): AsyncGenerator<string> {
     const requestSignal = createRequestSignal(signal);
+    const startedAt = Date.now();
+    let firstTokenAt = 0;
+    let contentChunks = 0;
+    let parseErrors = 0;
+    await this.recordRequest('stream-started', 'info', request, diagnostic);
     try {
       const response = await fetch(`${this.baseUrl}/chat/completions`, {
         method: 'POST',
@@ -139,6 +178,17 @@ export class NIMClient {
         signal: requestSignal.signal,
       });
 
+      await this.recordRequest(
+        'stream-response-received',
+        response.ok ? 'info' : 'warn',
+        request,
+        diagnostic,
+        {
+          httpStatus: response.status,
+          elapsedMs: Date.now() - startedAt,
+        }
+      );
+
       if (!response.ok) {
         throw await this.createApiError(response);
       }
@@ -148,9 +198,10 @@ export class NIMClient {
 
       const decoder = new TextDecoder();
       let buffer = '';
+      let streamFinished = false;
 
       try {
-        while (true) {
+        while (!streamFinished) {
           if (requestSignal.signal.aborted) throw requestSignal.signal.reason;
           const { done, value } = await reader.read();
           if (done) break;
@@ -162,13 +213,25 @@ export class NIMClient {
           for (const line of lines) {
             if (line.startsWith('data: ')) {
               const data = line.slice(6).trim();
-              if (data === '[DONE]') return;
+              if (data === '[DONE]') {
+                streamFinished = true;
+                break;
+              }
               try {
                 const parsed = JSON.parse(data);
                 const content = parsed.choices[0]?.delta?.content;
-                if (content) yield content;
+                if (content) {
+                  contentChunks++;
+                  if (!firstTokenAt) {
+                    firstTokenAt = Date.now();
+                    await this.recordRequest('first-token', 'info', request, diagnostic, {
+                      elapsedMs: firstTokenAt - startedAt,
+                    });
+                  }
+                  yield content;
+                }
               } catch {
-                // Ignore parse errors
+                parseErrors++;
               }
             }
           }
@@ -180,6 +243,21 @@ export class NIMClient {
         await reader.cancel?.().catch(() => undefined);
         reader.releaseLock();
       }
+      if (contentChunks === 0) throw new Error('NIM API stream returned no completion content.');
+      if (parseErrors > 0) {
+        await this.recordRequest('stream-parse-warning', 'warn', request, diagnostic, {
+          elapsedMs: Date.now() - startedAt,
+        });
+      }
+      await this.recordRequest('stream-completed', 'info', request, diagnostic, {
+        elapsedMs: Date.now() - startedAt,
+      });
+    } catch (error) {
+      await this.recordRequest('stream-failed', 'error', request, diagnostic, {
+        elapsedMs: Date.now() - startedAt,
+        error,
+      });
+      throw error;
     } finally {
       requestSignal.dispose();
     }
@@ -196,6 +274,37 @@ export class NIMClient {
     } catch {
       return false;
     }
+  }
+
+  private async recordRequest(
+    event: string,
+    level: 'info' | 'warn' | 'error',
+    request: ChatRequest,
+    diagnostic?: CompletionOptions['diagnostic'],
+    details: { httpStatus?: number; elapsedMs?: number; error?: unknown } = {}
+  ) {
+    if (!diagnostic) return;
+    if (event.includes('started')) {
+      await heartbeatAgentRun(diagnostic.attemptId, {
+        activity: 'Waiting for the cloud model.',
+        operation: 'model-request',
+        deadlineMs: REQUEST_TIMEOUT_MS,
+        taskId: diagnostic.taskId,
+      });
+    }
+    await recordDiagnostic({
+      level,
+      component: 'nim',
+      event,
+      attemptId: diagnostic.attemptId,
+      messageId: diagnostic.messageId,
+      jobId: diagnostic.jobId,
+      taskId: diagnostic.taskId,
+      operation: 'model-request',
+      model: this.getModelId(request.model),
+      route: 'cloud',
+      ...details,
+    });
   }
 
   private async createApiError(response: Response): Promise<Error> {
@@ -273,3 +382,5 @@ function createRequestSignal(parent?: AbortSignal): { signal: AbortSignal; dispo
 export function createNIMClient(apiKey: string, baseUrl?: string): NIMClient {
   return new NIMClient(apiKey, baseUrl);
 }
+import { heartbeatAgentRun, recordDiagnostic } from '../diagnostics';
+import type { CompletionOptions } from '@/shared/types';
