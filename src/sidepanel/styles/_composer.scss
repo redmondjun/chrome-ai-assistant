@@ -1,0 +1,78 @@
+@mixin layout {
+  .composer-wrap {
+    z-index: 3;
+    padding: 9px 12px 10px;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+  }
+}
+
+@mixin controls {
+  .composer-note {
+    margin: 0 0 6px;
+    color: var(--warning);
+    font-size: 11px;
+  }
+  .composer {
+    display: flex;
+    align-items: flex-end;
+    gap: 7px;
+    padding: 5px 5px 5px 10px;
+    border: 1px solid var(--border);
+    border-radius: 11px;
+    background: var(--elevated);
+    box-shadow: 0 1px 3px rgba(16, 24, 40, 0.05);
+  }
+  .composer:focus-within {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--focus);
+  }
+  .composer textarea {
+    flex: 1;
+    max-height: 128px;
+    resize: none;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: var(--text);
+    line-height: 1.45;
+    padding: 7px 0;
+  }
+  .composer textarea::placeholder {
+    color: var(--muted);
+  }
+  .composer button {
+    width: 34px;
+    height: 34px;
+    flex: none;
+    display: grid;
+    place-items: center;
+    border: 0;
+    border-radius: 8px;
+    background: var(--accent);
+    color: #fff;
+  }
+  .composer button:hover:not(:disabled) {
+    background: var(--accent-hover);
+  }
+  .composer button:disabled {
+    opacity: 0.38;
+    cursor: not-allowed;
+  }
+  .composer button svg {
+    width: 17px;
+    height: 17px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .composer-wrap > small {
+    display: block;
+    margin-top: 5px;
+    text-align: center;
+    color: var(--muted);
+    font-size: 9px;
+  }
+}

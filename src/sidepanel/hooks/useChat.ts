@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { loadChatState, saveChatState } from '../chat-storage';
-import type { ChatConversation, ChatMessage, TabContent } from '@/shared/types';
+import type { ChatConversation, ChatMessage, SavedPage, TabContent } from '@/shared/types';
 import { ACCOUNT_STATE_KEY, ANONYMOUS_SCOPE } from '@/shared/storage';
 
 interface ResearchOptions {
@@ -113,7 +113,9 @@ export function useChat(page: TabContent | null, researchOptions: ResearchOption
     (messageId: string, content?: string) => {
       updateMessage(messageId, message => ({
         ...message,
-        content: content ?? message.content,
+        content: content
+          ? [message.content, content].filter(Boolean).join('\n\n')
+          : message.content,
         isStreaming: false,
       }));
       setActiveMessageIds(current => current.filter(id => id !== messageId));
@@ -217,7 +219,7 @@ export function useChat(page: TabContent | null, researchOptions: ResearchOption
   }, [finishMessage, scope, updateMessage]);
 
   const send = useCallback(
-    async (prompt?: string) => {
+    async (prompt?: string, contextPages: SavedPage[] = []) => {
       const question = (prompt ?? input).trim();
       if (!question || !page || isLoading) return;
 
@@ -254,6 +256,7 @@ export function useChat(page: TabContent | null, researchOptions: ResearchOption
           question,
           messageId: assistantMessage.id,
           context: page,
+          contextPages,
           history: messages,
           tabId: tab?.id,
         });

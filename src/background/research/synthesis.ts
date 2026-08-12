@@ -1,7 +1,7 @@
 import type { ModelRouter } from '../api/router';
 import type { CompletionOptions, ResearchJob, ResearchTask } from '@/shared/types';
 
-const MAX_SUMMARIES_PER_CALL = 10;
+const MAX_SUMMARIES_PER_CALL = 25;
 const LOCAL_INPUT_CHAR_LIMIT = 20000;
 const CLOUD_INPUT_CHAR_LIMIT = 80000;
 type ResearchRouter = Pick<ModelRouter, 'complete'>;
@@ -89,13 +89,33 @@ export async function synthesizeResearch(
     await onLevel?.(level, summaries);
   }
 
+  const context = formatContextPages(job);
   const final = await router.complete(
     job.question,
     { hasLinks: true, contentLength: summaries[0].length },
-    `Answer the user's request using the compact research summary below. Follow the requested output and tone, combine related findings, cite supporting URLs, and clearly label uncertain or missing evidence. Do not recommend exporting to Word, PDF, or another format unless the user explicitly requested an export.\n\nUSER REQUEST:\n${job.question}\n\nRESEARCH:\n${summaries[0]}`,
+    `Answer the user's request using the saved context pages and compact research summary below. The context pages are authoritative framing or qualification criteria even when their child links were not expanded. Follow the requested output and tone, combine related findings, cite supporting URLs, and clearly label uncertain or missing evidence. Do not recommend exporting to Word, PDF, or another format unless the user explicitly requested an export.\n\nUSER REQUEST:\n${job.question}\n\nSAVED CONTEXT PAGES:\n${context || 'None'}\n\nRESEARCH:\n${summaries[0]}`,
     { temperature: 0.3, maxTokens: 4096, signal, diagnostic }
   );
-  return final.text;
+  const warnings = [
+    ...(job.contextWarnings || []),
+    ...(job.sourceRegistry || []).flatMap(source =>
+      source.status === 'failed'
+        ? [`${source.title} (${source.url}): ${source.error || 'Source could not be read.'}`]
+        : []
+    ),
+  ];
+  return warnings.length > 0
+    ? `${final.text}\n\nSource warnings:\n${warnings.map(warning => `- ${warning}`).join('\n')}`
+    : final.text;
+}
+
+function formatContextPages(job: ResearchJob) {
+  return (job.contextPages || [])
+    .map(
+      page =>
+        `${page.title}\nURL: ${page.url}\nCaptured: ${new Date(page.capturedAt).toISOString()}${page.refreshWarning ? `\nWarning: ${page.refreshWarning}` : ''}\n${page.text}`
+    )
+    .join('\n\n---\n\n');
 }
 
 async function reduceSummaries(

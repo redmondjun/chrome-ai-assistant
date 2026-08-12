@@ -42,9 +42,11 @@ describe('Content Extraction', () => {
   describe('cleanElement', () => {
     it('removes noise elements', () => {
       const div = document.createElement('div');
-      div.innerHTML = '<p>Main content</p><nav>Navigation</nav><footer>Footer</footer>';
+      div.innerHTML =
+        '<p>Main content</p><nav>Navigation</nav><div role="toolbar"><a href="/export">Export to PDF</a></div><footer>Footer</footer>';
       cleanElement(div);
       expect(div.querySelector('nav')).toBeNull();
+      expect(div.querySelector('[role="toolbar"]')).toBeNull();
       expect(div.querySelector('footer')).toBeNull();
       expect(div.querySelector('p')).not.toBeNull();
     });

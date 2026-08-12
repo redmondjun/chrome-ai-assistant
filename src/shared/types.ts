@@ -18,6 +18,16 @@ export interface LinkInfo {
   safety?: LinkSafetyResult;
 }
 
+export interface SavedPage {
+  id: string;
+  url: string;
+  title: string;
+  text: string;
+  links: LinkInfo[];
+  capturedAt: number;
+  refreshWarning?: string;
+}
+
 export interface LinkVisit {
   url: string;
   title: string;
@@ -170,6 +180,7 @@ export interface ResearchTask {
   label: string;
   sourceUrl: string;
   title: string;
+  originPageId?: string;
   status: ResearchTaskStatus;
   phase: ResearchWorkerPhase;
   phaseStartedAt: number;
@@ -311,6 +322,10 @@ export interface ResearchJob {
   id: string;
   messageId: string;
   question: string;
+  contextPages?: SavedPage[];
+  contextWarnings?: string[];
+  modelRequestsUsed?: number;
+  modelRequestBudget?: number;
   status: ResearchJobStatus;
   tasks: ResearchTask[];
   progress: ResearchProgress;
@@ -426,6 +441,7 @@ export interface CompletionResult {
 export interface BackgroundMessage {
   type:
     | 'GET_TAB_CONTENT'
+    | 'GET_URL_CONTENT'
     | 'ASK_QUESTION'
     | 'STOP_GENERATION'
     | 'FOLLOW_LINKS'
@@ -456,8 +472,10 @@ export interface BackgroundMessage {
     | 'GET_AGENT_RUN'
     | 'RETRY_AGENT_RUN';
   tabId?: number;
+  url?: string;
   question?: string;
   context?: TabContent;
+  contextPages?: SavedPage[];
   history?: ChatMessage[];
   settings?: Partial<StorageSettings>;
   modelUrl?: string;

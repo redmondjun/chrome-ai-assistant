@@ -1,18 +1,24 @@
 import type { ModelRouter } from '../api/router';
 import { classifyLinks } from '../pipeline/analyze';
-import { extractResearchTasks } from './link-policy';
+import { canonicalizeUrl, extractResearchTasks, isEvidenceLink } from './link-policy';
 import { buildExpansionPlan } from './expansion-plan';
 import { createResearchCheckpoint, setResearchStage, type ResearchCheckpoint } from './progress';
 import { createSourceRegistry } from './source-registry';
 import { getResearchJob, saveResearchJob } from './storage';
 import { summarizeDiscoveryBatch, summarizeFinalBatch, synthesizeResearch } from './synthesis';
-import { finalizeResearchSubject, scanResearchSeed } from './research-worker';
+import {
+  finalizeResearchSubject,
+  finalizeResearchSubjectWithoutModel,
+  scanResearchSeed,
+  scanResearchSeedWithoutModel,
+} from './research-worker';
 import { createPartialResearchAnswer } from './context';
 import type {
   ResearchBatchSummary,
   ResearchEvidence,
   ResearchJob,
   ResearchProgress,
+  SavedPage,
   ResearchTask,
   StorageSettings,
   TabContent,
@@ -20,6 +26,7 @@ import type {
 } from '@/shared/types';
 
 type ResearchRouter = Pick<ModelRouter, 'complete'>;
+const LARGE_RESEARCH_THRESHOLD = 40;
 
 export interface ResearchCallbacks {
   onProgress: (progress: ResearchProgress) => void;
@@ -30,10 +37,23 @@ export interface ResearchCallbacks {
 
 export async function createResearchJob(
   content: TabContent,
+  contextPages: SavedPage[],
   question: string,
   messageId: string
 ): Promise<ResearchJob> {
   const tasks = extractResearchTasks(content.links);
+  contextPages.forEach(page => {
+    extractResearchTasks(page.links).forEach(task => {
+      if (
+        tasks.some(
+          existing => canonicalizeUrl(existing.sourceUrl) === canonicalizeUrl(task.sourceUrl)
+        )
+      )
+        return;
+      task.originPageId = page.id;
+      tasks.push(task);
+    });
+  });
   if (tasks.length === 0) {
     throw new Error(
       'Deep Research could not find researchable links in the readable page content.'
@@ -77,6 +97,12 @@ export async function createResearchJob(
     id,
     messageId,
     question,
+    contextPages,
+    contextWarnings: contextPages.flatMap(page =>
+      page.refreshWarning ? [`${page.title}: ${page.refreshWarning}`] : []
+    ),
+    modelRequestsUsed: 0,
+    modelRequestBudget: 24,
     status: 'queued',
     stage: 'seed-scan',
     currentBatch: 0,
@@ -111,6 +137,7 @@ export async function runResearchJob(
   }
 
   prepareJob(job, settings);
+  const budgetedRouter = createBudgetedRouter(job, router);
   const checkpoint = createResearchCheckpoint(job, callbacks);
   const retrieveSource = createSourceRegistry({
     job,
@@ -126,7 +153,8 @@ export async function runResearchJob(
 
   try {
     await checkpoint(undefined, 'Selecting research subjects...');
-    await selectRelevantTasks(router, job, settings, checkpoint, signal, diagnostic);
+    await selectAttachmentExpansion(budgetedRouter, job, checkpoint, signal, diagnostic);
+    await selectRelevantTasks(budgetedRouter, job, settings, checkpoint, signal, diagnostic);
     const selectedTasks = job.tasks.filter(task => task.status !== 'skipped');
     if (selectedTasks.length === 0) {
       job.partialAnswer = createPartialResearchAnswer(job);
@@ -142,7 +170,7 @@ export async function runResearchJob(
     }
 
     await runSeedStage({
-      router,
+      router: budgetedRouter,
       job,
       tasks: selectedTasks,
       settings,
@@ -160,7 +188,7 @@ export async function runResearchJob(
     await checkpoint(undefined, `Planned ${job.expansionPlan?.length || 0} related-source reads.`);
 
     await runExpansionStage({
-      router,
+      router: budgetedRouter,
       job,
       tasks: selectedTasks.filter(task => task.seedStatus === 'completed'),
       settings,
@@ -172,13 +200,21 @@ export async function runResearchJob(
     });
     throwIfAborted(signal);
 
-    await runBatchSynthesis(router, job, selectedTasks, settings, checkpoint, signal, diagnostic);
+    await runBatchSynthesis(
+      budgetedRouter,
+      job,
+      selectedTasks,
+      settings,
+      checkpoint,
+      signal,
+      diagnostic
+    );
     throwIfAborted(signal);
 
     setResearchStage(job, 'final-synthesis');
     await checkpoint(undefined, 'Combining compact batch summaries...');
     const synthesizedAnswer = await synthesizeResearch(
-      router,
+      budgetedRouter,
       job,
       settings.privacy.localOnly,
       signal,
@@ -241,9 +277,12 @@ async function runSeedStage(options: StageOptions) {
     job.currentBatch = index + 1;
     assignBatch(batches[index], index);
     await checkpoint(undefined, `Seed scan · batch ${index + 1} of ${batches.length}`);
+    const largeJob = tasks.length >= LARGE_RESEARCH_THRESHOLD;
     await runWorkerPool(pending, settings.research.workerConcurrency, async task => {
       try {
-        await scanResearchSeed({ ...options, task, question: job.question });
+        const workerOptions = { ...options, task, question: job.question };
+        if (largeJob) await scanResearchSeedWithoutModel(workerOptions);
+        else await scanResearchSeed(workerOptions);
       } catch (error) {
         if (signal.aborted) throw error;
         task.seedStatus = 'failed';
@@ -254,14 +293,25 @@ async function runSeedStage(options: StageOptions) {
       }
     });
     if (!findBatchSummary(job, index, 'discovery')) {
-      const summary = await summarizeDiscoveryBatch(
-        options.router,
-        job.question,
-        batches[index],
-        settings.privacy.localOnly,
-        signal,
-        options.diagnostic
-      );
+      let summary = createFallbackBatchSummary(batches[index], 'discovery');
+      if (!largeJob) {
+        try {
+          summary = await summarizeDiscoveryBatch(
+            options.router,
+            job.question,
+            batches[index],
+            settings.privacy.localOnly,
+            signal,
+            options.diagnostic
+          );
+        } catch (error) {
+          if (signal.aborted) throw error;
+          await checkpoint(
+            undefined,
+            `Discovery summary for batch ${index + 1} failed; saved completed seed assessments and continued.`
+          );
+        }
+      }
       addBatchSummary(job, index, 'discovery', batches[index], summary);
       await checkpoint(undefined, `Saved discovery summary for batch ${index + 1}.`);
     }
@@ -279,12 +329,15 @@ async function runExpansionStage(options: StageOptions) {
     if (pending.length === 0) continue;
     job.currentBatch = index + 1;
     await checkpoint(undefined, `Expansion · batch ${index + 1} of ${batches.length}`);
+    const largeJob = tasks.length >= LARGE_RESEARCH_THRESHOLD;
     await runWorkerPool(pending, settings.research.workerConcurrency, async task => {
       const items = (job.expansionPlan || []).filter(
         item => item.taskId === task.id && item.status === 'planned'
       );
       try {
-        await finalizeResearchSubject({ ...options, task, question: job.question }, items);
+        const workerOptions = { ...options, task, question: job.question };
+        if (largeJob) await finalizeResearchSubjectWithoutModel(workerOptions);
+        else await finalizeResearchSubject(workerOptions, items);
       } catch (error) {
         if (signal.aborted) throw error;
         task.status = 'failed';
@@ -314,14 +367,24 @@ async function runBatchSynthesis(
     job.currentBatch = index + 1;
     await checkpoint(undefined, `Batch synthesis · batch ${index + 1} of ${batches.length}`);
     if (findBatchSummary(job, index, 'final')) continue;
-    const summary = await summarizeFinalBatch(
-      router,
-      job.question,
-      batches[index],
-      settings.privacy.localOnly,
-      signal,
-      diagnostic
-    );
+    let summary: string;
+    try {
+      summary = await summarizeFinalBatch(
+        router,
+        job.question,
+        batches[index],
+        settings.privacy.localOnly,
+        signal,
+        diagnostic
+      );
+    } catch (error) {
+      if (signal.aborted) throw error;
+      summary = createFallbackBatchSummary(batches[index], 'final');
+      await checkpoint(
+        undefined,
+        `Final summary for batch ${index + 1} failed; saved completed subject reports and continued.`
+      );
+    }
     addBatchSummary(job, index, 'final', batches[index], summary);
     job.partialAnswer = createPartialResearchAnswer(job);
     await checkpoint(undefined, `Saved final summary for batch ${index + 1}.`);
@@ -403,6 +466,79 @@ async function selectRelevantTasks(
   );
 }
 
+async function selectAttachmentExpansion(
+  router: ResearchRouter,
+  job: ResearchJob,
+  checkpoint: ResearchCheckpoint,
+  signal: AbortSignal,
+  diagnostic?: CompletionOptions['diagnostic']
+) {
+  const pages = (job.contextPages || []).filter(page =>
+    job.tasks.some(task => task.originPageId === page.id && task.status === 'queued')
+  );
+  if (pages.length === 0) return;
+  let expandedIds = new Set<string>();
+  try {
+    const descriptions = pages
+      .map(
+        page =>
+          `${page.id} | ${page.title}\nURL: ${page.url}\nCONTENT: ${page.text.slice(0, 1000)}\nLINK EXAMPLES: ${page.links
+            .slice(0, 8)
+            .map(link => link.text)
+            .join(', ')}`
+      )
+      .join('\n\n');
+    const result = await router.complete(
+      job.question,
+      { hasLinks: true, contentLength: descriptions.length },
+      `Decide which saved context pages contain child links that should be researched for the user request. A page can still ground the final answer when its links are not expanded. Return only a JSON array of page IDs whose child links should be expanded.\n\nUSER REQUEST:\n${job.question}\n\nPAGES:\n${descriptions}`,
+      { temperature: 0.1, maxTokens: 300, signal, diagnostic }
+    );
+    const parsed: unknown = JSON.parse(result.text.match(/\[[\s\S]*\]/)?.[0] || result.text);
+    if (Array.isArray(parsed)) {
+      expandedIds = new Set(parsed.filter(id => typeof id === 'string'));
+    }
+  } catch (error) {
+    if (signal.aborted) throw error;
+    await checkpoint(
+      undefined,
+      `Could not classify attached-page link expansion; using saved page content without following its child links.`
+    );
+  }
+  job.tasks.forEach(task => {
+    if (!task.originPageId || expandedIds.has(task.originPageId)) return;
+    task.status = 'skipped';
+    task.phase = 'skipped';
+    task.seedStatus = 'failed';
+    task.expansionStatus = 'skipped';
+    task.decisions.push({
+      url: task.sourceUrl,
+      title: task.title,
+      outcome: 'skipped',
+      reason: 'attached-page-links-not-selected',
+      depth: 0,
+      timestamp: Date.now(),
+    });
+  });
+  await checkpoint(
+    undefined,
+    `Attached page link expansion selected for ${expandedIds.size} of ${pages.length} pages.`
+  );
+}
+
+function createBudgetedRouter(job: ResearchJob, router: ResearchRouter): ResearchRouter {
+  const complete: ResearchRouter['complete'] = async (...args) => {
+    const budget = job.modelRequestBudget || 24;
+    const used = job.modelRequestsUsed || 0;
+    if (used >= budget) {
+      throw new Error(`Research model request budget exhausted (${used}/${budget}).`);
+    }
+    job.modelRequestsUsed = used + 1;
+    return router.complete(...args);
+  };
+  return { complete };
+}
+
 export async function setResearchJobStatus(
   jobId: string,
   status: 'paused' | 'queued' | 'cancelled'
@@ -432,7 +568,7 @@ export async function retryFailedResearchTasks(jobId: string): Promise<ResearchJ
   const job = await getResearchJob(jobId);
   if (!job) return undefined;
   const failed = job.tasks.filter(task => task.status === 'failed');
-  if (failed.length === 0) return job;
+  if (failed.length === 0 && job.status !== 'failed') return job;
   failed.forEach(task => {
     task.status = 'queued';
     task.phase = 'queued';
@@ -449,13 +585,22 @@ export async function retryFailedResearchTasks(jobId: string): Promise<ResearchJ
     source => source.status === 'success' && source.evidence
   ).length;
   job.status = 'queued';
-  job.stage = failed.some(task => task.seedStatus === 'queued') ? 'seed-scan' : 'expansion';
+  if (failed.length > 0) {
+    job.stage = failed.some(task => task.seedStatus === 'queued') ? 'seed-scan' : 'expansion';
+  }
   job.finalAnswer = undefined;
-  job.batchSummaries = (job.batchSummaries || []).filter(summary => summary.kind === 'discovery');
-  job.expansionPlan = [];
-  job.synthesisState = undefined;
+  job.modelRequestsUsed = 0;
+  if (failed.length > 0) {
+    job.batchSummaries = (job.batchSummaries || []).filter(summary => summary.kind === 'discovery');
+    job.expansionPlan = [];
+    job.synthesisState = undefined;
+  }
+  job.error = undefined;
   job.progress.status = 'queued';
-  job.progress.activity = `Retrying ${failed.length} failed research subjects; reusing ${reusableSources} validated sources.`;
+  job.progress.activity =
+    failed.length > 0
+      ? `Retrying ${failed.length} failed research subjects; reusing ${reusableSources} validated sources.`
+      : `Retrying ${job.stage || 'research synthesis'}; reusing ${reusableSources} validated sources.`;
   job.updatedAt = Date.now();
   await saveResearchJob(job);
   return job;
@@ -473,6 +618,19 @@ function prepareJob(job: ResearchJob, settings: StorageSettings) {
     job.sourceBudget ||= settings.research.maxUniqueSourcesPerJob;
   }
   job.tasks.forEach(task => {
+    if (
+      !isEvidenceLink({
+        url: task.sourceUrl,
+        text: task.label,
+        context: task.title,
+        isExternal: true,
+      })
+    ) {
+      task.status = 'skipped';
+      task.phase = 'skipped';
+      task.expansionStatus = 'skipped';
+      return;
+    }
     if (task.status === 'running') task.status = 'queued';
     task.decisions ||= [];
     task.pendingSources ||= [];
@@ -540,6 +698,14 @@ function findBatchSummary(
   return job.batchSummaries?.find(
     summary => summary.batchIndex === batchIndex && summary.kind === kind
   );
+}
+
+function createFallbackBatchSummary(tasks: ResearchTask[], kind: ResearchBatchSummary['kind']) {
+  const entries = tasks.flatMap(task => {
+    const content = kind === 'discovery' ? task.seedAssessment?.summary : task.report;
+    return content ? [`${task.label}\nSource: ${task.sourceUrl}\n${content}`] : [];
+  });
+  return entries.join('\n\n---\n\n').slice(0, 20000);
 }
 
 function chunk<T>(items: T[], size: number) {

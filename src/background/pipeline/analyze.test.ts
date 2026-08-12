@@ -356,7 +356,7 @@ describe('Analysis Pipeline', () => {
         mockRouter as any,
         mockContent,
         'Use everything you already read to generate STAR stories',
-        { ...mockSettings, links: { ...mockSettings.links, enabled: false } },
+        { ...mockSettings, links: { ...mockSettings.links, mode: 'deep' } },
         mockCallbacks,
         [],
         undefined,
@@ -387,6 +387,7 @@ describe('Analysis Pipeline', () => {
           thought: expect.stringContaining('persisted Deep Research findings'),
         })
       );
+      expect(mockCallbacks.onLinkVisit).not.toHaveBeenCalled();
     });
 
     it('reports persisted Deep Research source outcomes directly', async () => {

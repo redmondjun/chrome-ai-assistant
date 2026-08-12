@@ -58,22 +58,42 @@ describe('Deep Research subject discovery', () => {
         isExternal: false,
       })
     ).toBe(false);
+    expect(
+      isEvidenceLink({
+        url: 'https://wiki.example.com/pages/viewpreviousversions.action?pageId=42',
+        text: 'Page History',
+        isExternal: false,
+      })
+    ).toBe(false);
+    expect(
+      isEvidenceLink({
+        url: 'https://wiki.example.com/exportword?pageId=42',
+        text: 'Export to Word',
+        isExternal: false,
+      })
+    ).toBe(false);
   });
 
-  it('keeps unsafe seeds visible but permanently skipped', () => {
-    const [task] = extractResearchTasks([
+  it('does not create research subjects for unsafe action and navigation links', () => {
+    const tasks = extractResearchTasks([
       {
         url: 'https://stash.example.com/plugins/servlet/createBranch?issue=SQ-100',
         text: 'Create branch',
         isExternal: true,
       },
+      {
+        url: 'https://wiki.example.com/pages/editpage.action?pageId=1',
+        text: 'Edit',
+        isExternal: false,
+      },
+      {
+        url: 'https://wiki.example.com/people',
+        text: 'People',
+        isExternal: false,
+      },
     ]);
 
-    expect(task.status).toBe('skipped');
-    expect(task.pendingSources).toEqual([]);
-    expect(task.decisions).toEqual([
-      expect.objectContaining({ outcome: 'discarded', reason: 'blocked-unsafe-action' }),
-    ]);
+    expect(tasks).toEqual([]);
   });
 });
 
@@ -211,8 +231,9 @@ describe('Deep Research worker pool', () => {
       links: [],
     }));
 
+    const router = createStageRouter(false);
     await runResearchJob(
-      createStageRouter(false),
+      router,
       job.id,
       createSettings(3),
       { onProgress: jest.fn(), onAnswer: jest.fn(), onDone: jest.fn() },
@@ -223,6 +244,9 @@ describe('Deep Research worker pool', () => {
     expect(job.batchSummaries?.filter(summary => summary.kind === 'discovery')).toHaveLength(17);
     expect(job.batchSummaries?.filter(summary => summary.kind === 'final')).toHaveLength(17);
     expect(job.totalBatches).toBe(17);
+    expect(router.complete).toHaveBeenCalledTimes(19);
+    expect(job.modelRequestsUsed).toBe(19);
+    expect(job.modelRequestsUsed).toBeLessThan(job.modelRequestBudget || 24);
   });
 
   it('deduplicates related sources across workers and derives source counters', async () => {
@@ -255,6 +279,81 @@ describe('Deep Research worker pool', () => {
     expect(job.progress.sourcesRead).toBe(3);
     expect(job.progress.sourceCacheHits).toBe(1);
     expect(job.progress.sourcesRead).toBeLessThanOrEqual(job.sourceRegistry?.length || 0);
+  });
+
+  it('grounds synthesis in an attached page without expanding rejected child links', async () => {
+    const ticket = createTask('ticket');
+    const qualificationLink = createTask('qualification-child');
+    qualificationLink.originPageId = 'qualification-page';
+    const job = createJob([ticket, qualificationLink]);
+    job.question = 'Research all tickets and map them to qualifications';
+    job.contextPages = [
+      {
+        id: 'qualification-page',
+        url: 'https://wiki.example.com/promotion-plan',
+        title: 'Promotion plan',
+        text: 'Qualification rubric: demonstrate complex project delivery.',
+        links: [
+          {
+            url: qualificationLink.sourceUrl,
+            text: qualificationLink.title,
+            isExternal: true,
+          },
+        ],
+        capturedAt: 1,
+      },
+    ];
+    jest.mocked(getResearchJob).mockResolvedValue(job);
+    jest.mocked(fetchLinkContentInTab).mockImplementation(async url => ({
+      content: `Ticket evidence from ${url}`,
+      title: url,
+      finalUrl: url,
+      links: [],
+    }));
+    const router = createStageRouter(false);
+    router.complete.mockImplementation(async (_question, _context, prompt) => {
+      if (prompt.startsWith('Decide which saved context pages')) {
+        return { text: '[]', modelUsed: 'cloud' };
+      }
+      if (prompt.includes('Return JSON only')) {
+        return {
+          text: JSON.stringify({
+            summary: 'Ticket summary',
+            relevance: 1,
+            themes: [],
+            evidenceGaps: [],
+            expansionNeeded: false,
+          }),
+          modelUsed: 'cloud',
+        };
+      }
+      return { text: 'Grounded qualification draft', modelUsed: 'cloud' };
+    });
+
+    await runResearchJob(
+      router,
+      job.id,
+      createSettings(2),
+      { onProgress: jest.fn(), onAnswer: jest.fn(), onDone: jest.fn() },
+      new AbortController().signal
+    );
+
+    expect(fetchLinkContentInTab).toHaveBeenCalledWith(ticket.sourceUrl, expect.any(AbortSignal));
+    expect(fetchLinkContentInTab).not.toHaveBeenCalledWith(
+      qualificationLink.sourceUrl,
+      expect.anything()
+    );
+    expect(qualificationLink.decisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ reason: 'attached-page-links-not-selected' }),
+      ])
+    );
+    expect(router.complete).toHaveBeenCalledWith(
+      job.question,
+      expect.anything(),
+      expect.stringContaining('Qualification rubric: demonstrate complex project delivery.'),
+      expect.anything()
+    );
   });
 
   it('stops expansion at the persisted global unique-source budget', async () => {
@@ -664,6 +763,136 @@ describe('Deep Research worker pool', () => {
     expect(completed.report).toBe('Persisted completed report');
     expect(retried?.progress.activity).toBe(
       'Retrying 1 failed research subjects; reusing 1 validated sources.'
+    );
+  });
+
+  it('retries a job-level synthesis failure without discarding completed summaries', async () => {
+    const completed = createTask('completed');
+    completed.status = 'completed';
+    completed.seedStatus = 'completed';
+    completed.report = 'Persisted completed report';
+    const job = createJob([completed]);
+    const now = Date.now();
+    job.status = 'failed';
+    job.stage = 'batch-synthesis';
+    job.error = 'NIM API error (503): ResourceExhausted';
+    job.batchSummaries = [
+      {
+        batchIndex: 0,
+        kind: 'final',
+        taskIds: [completed.id],
+        summary: 'Persisted batch summary',
+        createdAt: now,
+      },
+    ];
+    job.sourceRegistry = [
+      {
+        key: completed.sourceUrl,
+        url: completed.sourceUrl,
+        title: completed.title,
+        status: 'success',
+        taskIds: [completed.id],
+        evidence: {
+          url: completed.sourceUrl,
+          title: completed.title,
+          category: 'other',
+          excerpt: 'Persisted readable evidence',
+          depth: 0,
+        },
+        retries: 0,
+        cacheHits: 0,
+        createdAt: now,
+        updatedAt: now,
+      },
+    ];
+    jest.mocked(getResearchJob).mockResolvedValue(job);
+
+    const retried = await retryFailedResearchTasks(job.id);
+
+    expect(retried?.status).toBe('queued');
+    expect(retried?.stage).toBe('batch-synthesis');
+    expect(retried?.batchSummaries).toEqual(job.batchSummaries);
+    expect(retried?.sourceRegistry?.[0].evidence?.excerpt).toBe('Persisted readable evidence');
+    expect(retried?.progress.activity).toBe(
+      'Retrying batch-synthesis; reusing 1 validated sources.'
+    );
+  });
+
+  it('skips persisted navigation tasks when an existing job resumes', async () => {
+    const navigation = createTask('Page History');
+    navigation.sourceUrl = 'https://wiki.example.com/pages/viewpreviousversions.action?pageId=42';
+    navigation.pendingSources = [{ url: navigation.sourceUrl, title: navigation.title, depth: 0 }];
+    const evidence = createTask('SQ-2960');
+    const job = createJob([navigation, evidence]);
+    job.question = 'Research all subjects';
+    jest.mocked(getResearchJob).mockResolvedValue(job);
+    jest.mocked(fetchLinkContentInTab).mockResolvedValue({
+      content: 'Readable ticket evidence',
+      title: evidence.title,
+      finalUrl: evidence.sourceUrl,
+      links: [],
+    });
+
+    await runResearchJob(
+      createStageRouter(false),
+      job.id,
+      createSettings(1),
+      { onProgress: jest.fn(), onAnswer: jest.fn(), onDone: jest.fn() },
+      new AbortController().signal
+    );
+
+    expect(navigation.status).toBe('skipped');
+    expect(fetchLinkContentInTab).not.toHaveBeenCalledWith(navigation.sourceUrl, expect.anything());
+    expect(fetchLinkContentInTab).toHaveBeenCalledWith(evidence.sourceUrl, expect.anything());
+  });
+
+  it('continues when a discovery batch summary request is exhausted', async () => {
+    const task = createTask('resilient-summary');
+    const job = createJob([task]);
+    job.question = 'Research all subjects';
+    jest.mocked(getResearchJob).mockResolvedValue(job);
+    jest.mocked(fetchLinkContentInTab).mockResolvedValue({
+      content: 'Readable evidence for a resilient subject',
+      title: task.title,
+      finalUrl: task.sourceUrl,
+      links: [],
+    });
+    const router = createStageRouter(false);
+    router.complete.mockImplementation(async (_question, _context, prompt) => {
+      if (prompt.includes('Combine these seed assessments')) {
+        throw new Error('NIM API error (503): ResourceExhausted');
+      }
+      if (prompt.includes('Return JSON only')) {
+        return {
+          text: JSON.stringify({
+            summary: 'Persisted seed assessment',
+            relevance: 0.9,
+            themes: ['resilience'],
+            evidenceGaps: [],
+            expansionNeeded: false,
+          }),
+          modelUsed: 'cloud' as const,
+        };
+      }
+      return { text: 'Completed research answer', modelUsed: 'cloud' as const };
+    });
+
+    await runResearchJob(
+      router,
+      job.id,
+      createSettings(1),
+      { onProgress: jest.fn(), onAnswer: jest.fn(), onDone: jest.fn() },
+      new AbortController().signal
+    );
+
+    expect(job.status).toBe('completed');
+    expect(job.batchSummaries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'discovery',
+          summary: expect.stringContaining('Persisted seed assessment'),
+        }),
+      ])
     );
   });
 });

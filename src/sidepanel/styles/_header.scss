@@ -1,0 +1,180 @@
+@use '../../styles/mixins' as *;
+
+@mixin apply {
+  .page-header {
+    position: sticky;
+    top: 0;
+    z-index: 4;
+    padding: 10px 12px 12px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+  }
+  .brand-row,
+  .header-actions,
+  .brand,
+  .message-meta {
+    display: flex;
+    align-items: center;
+  }
+  .brand-row {
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 9px;
+  }
+  .brand {
+    gap: 8px;
+    font-weight: 650;
+    font-size: 13px;
+    letter-spacing: -0.01em;
+  }
+  .brand-mark,
+  .assistant-mark,
+  .empty-mark,
+  .setup-mark {
+    display: grid;
+    place-items: center;
+    background: var(--accent);
+    color: #fff;
+    font-weight: 750;
+  }
+  .brand-mark {
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
+    font-size: 11px;
+  }
+  .header-actions {
+    gap: 6px;
+  }
+  .model-select {
+    max-width: 88px;
+    height: 30px;
+    padding: 0 26px 0 9px;
+    @include control;
+    font-size: 12px;
+  }
+  .conversation-select {
+    max-width: 120px;
+    height: 30px;
+    padding: 0 24px 0 9px;
+    @include control;
+    font-size: 12px;
+  }
+
+  .account-button {
+    width: 30px;
+    height: 30px;
+    flex: 0 0 30px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--text-primary);
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .account-button.sync-error {
+    border-color: var(--danger);
+  }
+
+  .account-button.sync-syncing {
+    border-color: var(--accent);
+  }
+  .new-chat-button {
+    height: 30px;
+    padding: 0 9px;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    background: var(--elevated);
+    color: var(--text);
+    font-size: 12px;
+  }
+  .new-chat-button:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+  .icon-button {
+    width: 30px;
+    height: 30px;
+    display: grid;
+    place-items: center;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    background: var(--elevated);
+    color: var(--muted);
+  }
+  .icon-button:hover {
+    color: var(--text);
+    border-color: var(--muted);
+  }
+  .icon-button svg {
+    width: 17px;
+    height: 17px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .page-context {
+    min-height: 51px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 10px;
+    border-radius: 9px;
+    background: var(--accent-soft);
+    border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--border));
+  }
+  .page-context-error {
+    background: color-mix(in srgb, var(--danger) 8%, var(--surface));
+    border-color: color-mix(in srgb, var(--danger) 25%, var(--border));
+  }
+  .status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex: none;
+  }
+  .status-ready {
+    background: var(--success);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 14%, transparent);
+  }
+  .status-error {
+    background: var(--danger);
+  }
+  .status-loading {
+    background: var(--accent);
+    animation: pulse 1.2s infinite;
+  }
+  .page-copy {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-width: 0;
+    gap: 1px;
+  }
+  .page-copy strong,
+  .page-copy span {
+    @include truncate;
+  }
+  .page-copy strong {
+    font-size: 12px;
+    font-weight: 650;
+    color: var(--text);
+  }
+  .page-copy span {
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .retry-button {
+    border: 0;
+    background: transparent;
+    color: var(--danger);
+    font-size: 12px;
+    font-weight: 650;
+    padding: 5px;
+  }
+}

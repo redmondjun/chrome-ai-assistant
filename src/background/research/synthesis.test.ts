@@ -32,6 +32,34 @@ describe('hierarchical research synthesis', () => {
     expect(levels.length).toBeGreaterThanOrEqual(2);
     expect(prompts.at(-1)).toContain('Do not recommend exporting to Word, PDF, or another format');
   });
+
+  it('appends explicit saved-page and failed-source warnings', async () => {
+    const job = createSynthesisJob(1, 20);
+    job.contextWarnings = ['Promotion plan: refresh failed'];
+    job.sourceRegistry = [
+      {
+        key: 'https://jira.example.com/browse/SQ-1',
+        url: 'https://jira.example.com/browse/SQ-1',
+        title: 'SQ-1',
+        status: 'failed',
+        taskIds: [],
+        error: 'Access denied',
+        retries: 0,
+        cacheHits: 0,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    const router = {
+      complete: jest.fn(async () => ({ text: 'Grounded draft', modelUsed: 'cloud' as const })),
+    };
+
+    const answer = await synthesizeResearch(router, job, false, new AbortController().signal);
+
+    expect(answer).toContain('Grounded draft');
+    expect(answer).toContain('Promotion plan: refresh failed');
+    expect(answer).toContain('SQ-1 (https://jira.example.com/browse/SQ-1): Access denied');
+  });
 });
 
 function createSynthesisJob(summaryCount: number, summaryLength: number): ResearchJob {

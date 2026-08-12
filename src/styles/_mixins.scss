@@ -1,0 +1,32 @@
+@mixin control($radius: 7px, $background: var(--elevated)) {
+  border: 1px solid var(--border);
+  border-radius: $radius;
+  background: $background;
+  color: var(--text);
+}
+
+@mixin focus-ring {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+@mixin truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@mixin flex-center($gap: null) {
+  display: flex;
+  align-items: center;
+
+  @if $gap {
+    gap: $gap;
+  }
+}
+
+@mixin alert($color, $border-strength: 28%) {
+  border-color: color-mix(in srgb, $color $border-strength, var(--border));
+  background: color-mix(in srgb, $color 8%, var(--surface));
+  color: $color;
+}

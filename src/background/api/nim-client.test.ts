@@ -104,6 +104,33 @@ describe('NIMClient', () => {
       ).rejects.toThrow('NIM API error (401 Unauthorized): Invalid API key');
     });
 
+    it('retries a transient resource-exhausted response', async () => {
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 503,
+          statusText: 'Service Unavailable',
+          headers: { get: () => '0' },
+          text: async () =>
+            JSON.stringify({
+              error: { message: 'ResourceExhausted: Worker local total request limit reached' },
+            }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ choices: [{ message: { content: 'Recovered response' } }] }),
+        });
+
+      await expect(
+        client.chatCompletion({
+          model: 'nemotron-3-nano',
+          messages: [],
+        })
+      ).resolves.toBe('Recovered response');
+      expect(fetch).toHaveBeenCalledTimes(2);
+    });
+
     it('handles network errors', async () => {
       global.fetch = jest.fn().mockRejectedValue(new Error('Network error'));
 
@@ -173,6 +200,35 @@ describe('NIMClient', () => {
       await expect(generator.next()).rejects.toThrow(
         'NIM API error (429 Too Many Requests): Rate limited'
       );
+    });
+
+    it('reports the abort reason instead of Chrome stream internals', async () => {
+      const controller = new AbortController();
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        body: {
+          getReader: () => ({
+            read: () =>
+              new Promise((_, reject) => {
+                controller.signal.addEventListener('abort', () =>
+                  reject(new Error('BodyStreamBuffer was aborted'))
+                );
+              }),
+            cancel: jest.fn().mockResolvedValue(undefined),
+            releaseLock: jest.fn(),
+          }),
+        },
+      });
+
+      const generator = client.streamChatCompletion(
+        { model: 'nemotron-3-nano', messages: [], stream: true },
+        controller.signal
+      );
+      const pendingChunk = generator.next();
+      await Promise.resolve();
+      controller.abort(new DOMException('The AI response timed out.', 'TimeoutError'));
+
+      await expect(pendingChunk).rejects.toThrow('The AI response timed out.');
     });
   });
 

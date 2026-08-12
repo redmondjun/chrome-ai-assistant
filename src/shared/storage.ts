@@ -9,6 +9,8 @@ export const ANONYMOUS_SCOPE = 'anonymous';
 
 export const conversationKey = (scope: string) => `chrome-ai-conversations:${scope}`;
 export const activeConversationKey = (scope: string) => `chrome-ai-active-conversation:${scope}`;
+export const savedPagesKey = (scope: string) => `chrome-ai-saved-pages:${scope}`;
+export const conversationPagesKey = (scope: string) => `chrome-ai-conversation-pages:${scope}`;
 
 export const EMPTY_ACCOUNT_STATE: AccountState = { configured: true, user: null };
 
